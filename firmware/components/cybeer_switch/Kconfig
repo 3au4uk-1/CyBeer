@@ -1,0 +1,10 @@
+menu "CyBeer switch"
+
+    config CYBEER_SWITCH_TEST
+        bool "Enable switch test hooks (injected raw, skip GPIO)"
+        default n
+        help
+            When enabled, cybeer_switch skips GPIO setup and uses
+            cybeer_switch_test_set_raw() for deterministic unit tests.
+
+endmenu
