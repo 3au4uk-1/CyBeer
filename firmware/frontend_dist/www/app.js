@@ -61,6 +61,48 @@
     if (ver) ver.textContent = s.firmwareVersion ? `fw ${s.firmwareVersion}` : "";
   }
 
+  function shortId(s) {
+    if (!s) return "—";
+    const t = String(s);
+    return t.length > 10 ? `${t.slice(0, 6)}…${t.slice(-4)}` : t;
+  }
+
+  function renderActiveMatch(am) {
+    const el = document.getElementById("activeTournamentLine");
+    if (!el) return;
+    el.classList.remove("err");
+    if (!am || typeof am !== "object" || Array.isArray(am)) {
+      el.textContent = "Bracket: idle.";
+      return;
+    }
+    const tid = am.tournamentId;
+    const name = am.name || "";
+    if (!tid) {
+      el.textContent = "Bracket: idle.";
+      return;
+    }
+
+    const parts = [];
+    parts.push(`${name ? name + " — " : ""}${shortId(tid)}`);
+
+    const pend = am.pendingNextRun;
+    if (pend && typeof pend.slot === "string") {
+      parts.push(`next device run binds to slot ${pend.slot} (${shortId(pend.matchId)})`);
+    }
+
+    const m = am.match;
+    if (m && typeof m === "object") {
+      const ra = shortId(m.runIdA);
+      const rb = shortId(m.runIdB);
+      const pa = shortId(m.participantAId);
+      const pb = shortId(m.participantBId);
+      parts.push(`focus: ${pa} vs ${pb} • runs ${ra} / ${rb}`);
+      if (m.winnerParticipantId) parts.push(`winner ${shortId(m.winnerParticipantId)}`);
+    }
+
+    el.textContent = parts.filter(Boolean).join(" · ") || "(active)";
+  }
+
   function renderRuns(runs) {
     const body = document.getElementById("runsBody");
     if (!body || !Array.isArray(runs)) return;
@@ -91,6 +133,7 @@
       const st = await rs.json();
       const runs = await rr.json();
       renderStatus(st);
+      renderActiveMatch(st.activeMatch);
       renderRuns(runs.slice().reverse());
     } catch (e) {
       const badge = document.getElementById("stateBadge");

@@ -9,6 +9,7 @@
 #include "cybeer_fsm.h"
 #include "cybeer_ws.h"
 #include "cybeer_storage.h"
+#include "cybeer_tournament.h"
 #include "cybeer_wifi.h"
 
 #include <strings.h>
@@ -90,7 +91,7 @@ static esp_err_t h_get_status(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "adminPinConfigured", cybeer_nvs_admin_pin_is_configured());
     cJSON_AddStringToObject(root, "firmwareVersion", "1.0.0");
     cJSON_AddStringToObject(root, "unclaimedRunId", unclaimed);
-    cJSON_AddItemToObject(root, "activeMatch", cJSON_CreateNull());
+    cybeer_tournament_fill_status_active_match(root);
 
     return json_send(req, root);
 }
@@ -225,6 +226,7 @@ static esp_err_t h_post_claim(httpd_req_t *req)
     esp_err_t err = cybeer_storage_claim_run(run_id, arg, by_pid);
     httpd_resp_set_type(req, "application/json");
     if (err == ESP_OK) {
+        (void)cybeer_tournament_notify_run_claimed(run_id);
         return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     }
     if (err == ESP_ERR_NOT_FOUND) {
@@ -391,6 +393,7 @@ static esp_err_t h_post_admin_runs(httpd_req_t *req)
 
     esp_err_t err = cybeer_storage_add_run_manual(&run);
     if (err == ESP_OK) {
+        (void)cybeer_tournament_notify_run_saved(&run);
         cJSON *resp = cJSON_CreateObject();
         if (!resp) {
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
@@ -627,6 +630,162 @@ static esp_err_t h_put_settings(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t h_get_tournaments_active(httpd_req_t *req)
+{
+    cJSON *env = NULL;
+    if (cybeer_tournament_get_active_envelope_json(&env) != ESP_OK || !env) {
+        return send_json_text(req, "500 Internal Server Error", "{\"error\":\"tournament envelope\"}");
+    }
+    return json_send(req, env);
+}
+
+static bool parse_admin_tournament_start(const char *path, char uuid_out[40])
+{
+    const char *pfx = "/api/admin/tournaments/";
+    if (strncmp(path, pfx, strlen(pfx)) != 0) {
+        return false;
+    }
+    const char *rest = path + strlen(pfx);
+    const char *suf = strstr(rest, "/start");
+    if (!suf || strcmp(suf, "/start") != 0) {
+        return false;
+    }
+    size_t id_len = (size_t)(suf - rest);
+    if (id_len == 0 || id_len >= 40) {
+        return false;
+    }
+    memcpy(uuid_out, rest, id_len);
+    uuid_out[id_len] = '\0';
+    return strchr(uuid_out, '/') == NULL;
+}
+
+static bool parse_admin_match_assign(const char *path, char uuid_out[40])
+{
+    const char *pfx = "/api/admin/tournaments/matches/";
+    if (strncmp(path, pfx, strlen(pfx)) != 0) {
+        return false;
+    }
+    const char *rest = path + strlen(pfx);
+    const char *suf = strstr(rest, "/assign");
+    if (!suf || strcmp(suf, "/assign") != 0) {
+        return false;
+    }
+    size_t id_len = (size_t)(suf - rest);
+    if (id_len == 0 || id_len >= 40) {
+        return false;
+    }
+    memcpy(uuid_out, rest, id_len);
+    uuid_out[id_len] = '\0';
+    return strchr(uuid_out, '/') == NULL;
+}
+
+static esp_err_t h_post_admin_tournaments_create(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root) {
+            cJSON_Delete(root);
+        }
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json object\"}");
+    }
+    const cJSON *jnm = cJSON_GetObjectItemCaseSensitive(root, "name");
+    const cJSON *jp = cJSON_GetObjectItemCaseSensitive(root, "participantIds");
+    const char *nm = (cJSON_IsString(jnm) && jnm->valuestring) ? jnm->valuestring : "";
+    if (!nm[0] || !jp || !cJSON_IsArray(jp) || cJSON_GetArraySize(jp) <= 0) {
+        cJSON_Delete(root);
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"name and participantIds[]\"}");
+    }
+    char tid[37];
+    esp_err_t e = cybeer_tournament_create_named(nm, jp, tid);
+    cJSON_Delete(root);
+    if (e != ESP_OK) {
+        return send_json_text(req, "500 Internal Server Error", "{\"error\":\"generate\"}");
+    }
+    cJSON *resp = cJSON_CreateObject();
+    if (!resp) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    cJSON_AddStringToObject(resp, "id", tid);
+    return json_send(req, resp);
+}
+
+static esp_err_t h_post_admin_tournament_start(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char tid[40];
+    if (!parse_admin_tournament_start(path, tid)) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+    esp_err_t e = cybeer_tournament_start_by_id(tid);
+    if (e == ESP_OK) {
+        return send_json_text(req, "200 OK", "{\"ok\":true}");
+    }
+    if (e == ESP_ERR_NOT_FOUND) {
+        return send_json_text(req, "404 Not Found", "{\"error\":\"tournament id not found\"}");
+    }
+    if (e == ESP_ERR_INVALID_STATE) {
+        return send_json_text(req, "409 Conflict",
+                              "{\"error\":\"cannot start (already active, not draft, or invalid)\"}");
+    }
+    return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
+}
+
+static esp_err_t h_post_admin_tournament_assign(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char mid[40];
+    if (!parse_admin_match_assign(path, mid)) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root) {
+            cJSON_Delete(root);
+        }
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json object\"}");
+    }
+    const cJSON *jsl = cJSON_GetObjectItemCaseSensitive(root, "slot");
+    const char *slot = (cJSON_IsString(jsl) && jsl->valuestring) ? jsl->valuestring : "";
+    cJSON_Delete(root);
+    if (strcmp(slot, "A") != 0 && strcmp(slot, "B") != 0) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"slot A or B\"}");
+    }
+    esp_err_t e = cybeer_tournament_assign_next_bind(mid, slot);
+    if (e == ESP_OK) {
+        return send_json_text(req, "200 OK", "{\"ok\":true}");
+    }
+    if (e == ESP_ERR_NOT_FOUND) {
+        return send_json_text(req, "404 Not Found", "{\"error\":\"match\"}");
+    }
+    if (e == ESP_ERR_INVALID_STATE || e == ESP_ERR_INVALID_ARG) {
+        return send_json_text(req, "409 Conflict",
+                              "{\"error\":\"assignment not allowed (busy slot / no tournament / seeds)\"}");
+    }
+    return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
+}
+
 static bool path_has_dotdot(const char *s)
 {
     return strstr(s, "..") != NULL;
@@ -762,11 +921,37 @@ esp_err_t cybeer_web_start(void)
         .uri = "/api/settings", .method = HTTP_PUT, .handler = h_put_settings, .user_ctx = NULL
     };
 
+    httpd_uri_t u_tor_active_pub = {
+        .uri = "/api/tournaments/active",
+        .method = HTTP_GET,
+        .handler = h_get_tournaments_active,
+        .user_ctx = NULL
+    };
+    httpd_uri_t u_tor_assign = { .uri = "/api/admin/tournaments/matches/*/assign",
+                                  .method = HTTP_POST,
+                                  .handler = h_post_admin_tournament_assign,
+                                  .user_ctx = NULL };
+    httpd_uri_t u_tor_start = {
+        .uri = "/api/admin/tournaments/*/start",
+        .method = HTTP_POST,
+        .handler = h_post_admin_tournament_start,
+        .user_ctx = NULL
+    };
+    httpd_uri_t u_tor_create = {
+        .uri = "/api/admin/tournaments",
+        .method = HTTP_POST,
+        .handler = h_post_admin_tournaments_create,
+        .user_ctx = NULL
+    };
+
     httpd_uri_t u_static = { .uri = "/*", .method = HTTP_GET, .handler = h_static, .user_ctx = NULL };
 
     if (httpd_register_uri_handler(s_server, &u_status) != ESP_OK || httpd_register_uri_handler(s_server, &u_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
-        || httpd_register_uri_handler(s_server, &u_admin_pin) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_tor_active_pub) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_tor_assign) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_tor_start) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_tor_create) != ESP_OK || httpd_register_uri_handler(s_server, &u_admin_pin) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_run_patch) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_run_del) != ESP_OK

@@ -29,6 +29,8 @@ static SemaphoreHandle_t s_fs_mtx;
 
 static char s_runs_json_buf[JSON_BUF_SZ];
 static char s_participants_json_buf[JSON_BUF_SZ];
+static char s_tournaments_json_buf[JSON_BUF_SZ];
+static char s_active_tournament_json_buf[JSON_BUF_SZ];
 /** Only used while `s_fs_mtx` is held (avoid large stack frames). */
 static char s_json_scratch[JSON_BUF_SZ];
 
@@ -155,6 +157,22 @@ esp_err_t cybeer_storage_init(void)
     ESP_RETURN_ON_ERROR(err, TAG, "layout");
 
     return ESP_OK;
+}
+
+static cJSON *parse_object_file_locked(const char *path)
+{
+    size_t len = 0;
+    if (read_full_locked(path, s_json_scratch, sizeof(s_json_scratch), &len) != ESP_OK) {
+        return NULL;
+    }
+    cJSON *root = cJSON_Parse(s_json_scratch);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root) {
+            cJSON_Delete(root);
+        }
+        return NULL;
+    }
+    return root;
 }
 
 static cJSON *parse_array_file_locked(const char *path)
@@ -644,4 +662,76 @@ const char *cybeer_storage_participants_json(void)
     }
     give_mtx();
     return s_participants_json_buf;
+}
+
+const char *cybeer_storage_tournaments_json(void)
+{
+    if (take_mtx() != ESP_OK) {
+        return "";
+    }
+    esp_err_t err =
+        read_full_locked(PATH_TOURNAMENTS, s_tournaments_json_buf, sizeof(s_tournaments_json_buf), NULL);
+    if (err != ESP_OK) {
+        s_tournaments_json_buf[0] = '\0';
+    }
+    give_mtx();
+    return s_tournaments_json_buf;
+}
+
+const char *cybeer_storage_active_tournament_json(void)
+{
+    if (take_mtx() != ESP_OK) {
+        return "";
+    }
+    esp_err_t err = read_full_locked(PATH_ACTIVE_T, s_active_tournament_json_buf,
+                                      sizeof(s_active_tournament_json_buf), NULL);
+    if (err != ESP_OK) {
+        s_active_tournament_json_buf[0] = '\0';
+    }
+    give_mtx();
+    return s_active_tournament_json_buf;
+}
+
+esp_err_t cybeer_storage_load_tournaments_cjson(cJSON **out_arr)
+{
+    ESP_RETURN_ON_FALSE(out_arr, ESP_ERR_INVALID_ARG, TAG, "out");
+    *out_arr = NULL;
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+    cJSON *arr = parse_array_file_locked(PATH_TOURNAMENTS);
+    give_mtx();
+    ESP_RETURN_ON_FALSE(arr, ESP_FAIL, TAG, "parse tournaments");
+    *out_arr = arr;
+    return ESP_OK;
+}
+
+esp_err_t cybeer_storage_save_tournaments_cjson(cJSON *arr)
+{
+    ESP_RETURN_ON_FALSE(arr && cJSON_IsArray(arr), ESP_ERR_INVALID_ARG, TAG, "arr");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+    esp_err_t err = persist_json_locked(PATH_TOURNAMENTS, arr);
+    give_mtx();
+    return err;
+}
+
+esp_err_t cybeer_storage_load_active_tournament_cjson(cJSON **out_obj)
+{
+    ESP_RETURN_ON_FALSE(out_obj, ESP_ERR_INVALID_ARG, TAG, "out");
+    *out_obj = NULL;
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+    cJSON *obj = parse_object_file_locked(PATH_ACTIVE_T);
+    give_mtx();
+    ESP_RETURN_ON_FALSE(obj, ESP_FAIL, TAG, "parse active");
+    *out_obj = obj;
+    return ESP_OK;
+}
+
+esp_err_t cybeer_storage_save_active_tournament_cjson(cJSON *obj)
+{
+    ESP_RETURN_ON_FALSE(obj && cJSON_IsObject(obj), ESP_ERR_INVALID_ARG, TAG, "obj");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+    esp_err_t err = persist_json_locked(PATH_ACTIVE_T, obj);
+    give_mtx();
+    return err;
 }

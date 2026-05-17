@@ -3,6 +3,7 @@
 #include "cybeer_fsm.h"
 #include "cybeer_led.h"
 #include "cybeer_storage.h"
+#include "cybeer_tournament.h"
 #include "cybeer_web.h"
 #include "cybeer_wifi.h"
 #include "cybeer_switch.h"
@@ -34,6 +35,7 @@ static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
         ESP_LOGE(TAG, "storage_add_run failed: %s", esp_err_to_name(err));
     } else {
         ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
+        (void)cybeer_tournament_notify_run_saved(&run);
         cybeer_ws_on_run_finished(run.id, run.duration_us);
     }
 }

@@ -65,3 +65,14 @@ esp_err_t cybeer_storage_get_participant_stats(const char *pid, cybeer_stats_t *
 /** Static buffers; copy before calling again or taking the filesystem mutex elsewhere. */
 const char *cybeer_storage_runs_json(void);
 const char *cybeer_storage_participants_json(void);
+
+const char *cybeer_storage_tournaments_json(void);
+const char *cybeer_storage_active_tournament_json(void);
+
+/** Parse/copy helper: returns malloc'd array from tournaments.json — caller frees with cJSON_Delete. */
+esp_err_t cybeer_storage_load_tournaments_cjson(cJSON **out_arr);
+esp_err_t cybeer_storage_save_tournaments_cjson(cJSON *arr);
+
+/** Same for active_tournament.json root object ({}) — caller frees. */
+esp_err_t cybeer_storage_load_active_tournament_cjson(cJSON **out_obj);
+esp_err_t cybeer_storage_save_active_tournament_cjson(cJSON *obj);

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tournament — CyBeer</title>
+  <link rel="stylesheet" href="/app.css" />
+  <style>
+    .bracket-wrap {
+      display: flex;
+      flex-direction: row;
+      gap: 1rem;
+      align-items: stretch;
+      overflow-x: auto;
+      padding-bottom: 0.5rem;
+      margin-top: 0.75rem;
+    }
+    .bracket-col {
+      min-width: 11.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .bracket-col h3 {
+      margin: 0 0 0.25rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .bracket-match {
+      background: linear-gradient(180deg, rgba(61, 42, 31, 0.9), rgba(30, 24, 18, 0.95));
+      border: 1px solid var(--stout);
+      border-radius: 8px;
+      padding: 0.6rem 0.65rem;
+      font-size: 0.86rem;
+    }
+    .bracket-match.win {
+      border-color: rgba(107, 191, 114, 0.45);
+      box-shadow: 0 0 0 1px rgba(107, 191, 114, 0.12);
+    }
+    .bracket-row {
+      margin: 0.2rem 0;
+      padding: 0.15rem 0;
+      border-bottom: 1px dashed rgba(154, 138, 120, 0.25);
+    }
+    .bracket-row:last-child {
+      border-bottom: none;
+    }
+    .bracket-slot {
+      color: var(--gold);
+      font-size: 0.72rem;
+      margin-right: 0.25rem;
+    }
+    .bracket-muted {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    #torHead {
+      margin: 0.25rem 0 0.5rem;
+    }
+    .pill {
+      display: inline-block;
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      background: rgba(199, 128, 45, 0.2);
+      color: var(--amber);
+      margin-left: 0.35rem;
+    }
+    .pill-pending {
+      background: rgba(232, 180, 74, 0.2);
+      color: var(--gold);
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🍺</span>
+      <h1>CyBeer</h1>
+    </div>
+    <nav>
+      <a href="/">Leaderboard</a>
+      <a href="/claim.html">Claim run</a>
+      <a href="/admin.html">Admin</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div id="torHead"><span class="bracket-muted">Loading bracket…</span></div>
+      <p id="torPending" class="hint"></p>
+      <div id="bracketWrap" class="bracket-wrap" aria-label="Bracket"></div>
+      <p class="hint">Refreshes every 8s. Lowest run time advances when both halves are claimed.</p>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      const nameByPid = new Map();
+
+      function shortId(s) {
+        if (!s || typeof s !== "string") return "—";
+        return s.length > 14 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+      }
+
+      async function loadParticipants() {
+        try {
+          const r = await fetch("/api/participants");
+          const data = await r.json();
+          nameByPid.clear();
+          if (Array.isArray(data)) {
+            for (const p of data) {
+              if (p && p.id && p.name) nameByPid.set(p.id, p.name);
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      function pname(pid) {
+        if (!pid) return "bye";
+        return nameByPid.get(pid) || shortId(pid);
+      }
+
+      function renderMatchCard(m, pending) {
+        const won = !!(m.winnerParticipantId && String(m.winnerParticipantId).length);
+        const el = document.createElement("article");
+        el.className = "bracket-match" + (won ? " win" : "");
+
+        let pendingTag = "";
+        if (pending && pending.matchId === m.id) {
+          pendingTag = `<span class="pill pill-pending">Next run → slot ${pending.slot}</span>`;
+        }
+
+        const ra = shortId(m.runIdA || "");
+        const rb = shortId(m.runIdB || "");
+
+        el.innerHTML =
+          `<div class="bracket-muted">Match ${shortId(m.id)}</div>` +
+          pendingTag +
+          `<div class="bracket-row"><span class="bracket-slot">A</span>${pname(m.participantAId)} · run ${ra}</div>` +
+          `<div class="bracket-row"><span class="bracket-slot">B</span>${pname(m.participantBId)} · run ${rb}</div>` +
+          (won ? `<div class="bracket-muted" style="margin-top:6px;">Winner · ${pname(m.winnerParticipantId)}</div>` : "");
+
+        return el;
+      }
+
+      async function tick() {
+        await loadParticipants();
+        const wrap = document.getElementById("bracketWrap");
+        const head = document.getElementById("torHead");
+        const pendEl = document.getElementById("torPending");
+
+        try {
+          const rs = await fetch("/api/tournaments/active");
+          const data = await rs.json();
+          const tor = data.tournament;
+          const pending = data.pendingNextRun || null;
+
+          wrap.innerHTML = "";
+          pendEl.textContent = "";
+
+          if (!tor || !Array.isArray(tor.matches)) {
+            head.innerHTML =
+              `<span class="bracket-muted">No active tournament bracket on device.</span>`;
+            return;
+          }
+
+          const st = tor.status || "—";
+          const champ = tor.championParticipantId;
+          head.innerHTML = `<strong>${tor.name || "Tournament"}</strong> · <span class="bracket-muted">${shortId(tor.id)}</span>` +
+            ` <span class="pill">${String(st)}</span>` +
+            (champ ? `<span class="pill">Champion · ${pname(champ)}</span>` : "");
+
+          if (pending && pending.slot) {
+            pendEl.textContent = `PIN queue: assign the next recorded run to match ${shortId(pending.matchId)}, slot ${pending.slot}`;
+          }
+
+          const cols = {};
+          for (const m of tor.matches) {
+            const c = typeof m.column === "number" ? m.column : 0;
+            if (!cols[c]) cols[c] = [];
+            cols[c].push(m);
+          }
+          const order = Object.keys(cols)
+            .map((x) => Number(x))
+            .sort((a, b) => b - a);
+
+          for (const col of order) {
+            const colEl = document.createElement("div");
+            colEl.className = "bracket-col";
+            const h = document.createElement("h3");
+            const roundUi = order.indexOf(col) + 1;
+            h.textContent = `Round ${roundUi}`;
+            colEl.appendChild(h);
+
+            const list = cols[col].slice().sort((a, b) => (Number(a.index) || 0) - (Number(b.index) || 0));
+            for (const m of list) {
+              /* duration overlay not in firmware JSON yet — omit */
+              colEl.appendChild(renderMatchCard(m, pending));
+            }
+            wrap.appendChild(colEl);
+          }
+        } catch (_) {
+          if (head) head.innerHTML = `<span class="bracket-muted">Offline or error loading bracket.</span>`;
+          if (wrap) wrap.innerHTML = "";
+          if (pendEl) pendEl.textContent = "";
+        }
+      }
+
+      tick();
+      setInterval(tick, 8000);
+    })();
+  </script>
+</body>
+</html>
