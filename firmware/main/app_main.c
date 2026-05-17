@@ -2,6 +2,7 @@
 #include "cybeer_fsm.h"
 #include "cybeer_led.h"
 #include "cybeer_storage.h"
+#include "cybeer_wifi.h"
 #include "cybeer_switch.h"
 #include "cybeer_timer.h"
 
@@ -104,6 +105,9 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(cybeer_storage_init());
     ESP_LOGI(TAG, "CyBeer boot");
+
+    ESP_ERROR_CHECK(cybeer_wifi_init());
+    ESP_ERROR_CHECK(cybeer_wifi_start());
 
     cybeer_switch_init();
     cybeer_display_init();

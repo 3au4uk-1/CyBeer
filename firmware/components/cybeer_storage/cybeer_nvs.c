@@ -41,7 +41,8 @@ esp_err_t cybeer_nvs_get_wifi(char *ssid_out, size_t ssid_max, char *pass_out, s
 
 esp_err_t cybeer_nvs_set_wifi(const char *ssid, const char *pass)
 {
-    ESP_RETURN_ON_FALSE(ssid && pass, ESP_ERR_INVALID_ARG, TAG, "null ssid/pass");
+    ESP_RETURN_ON_FALSE(ssid, ESP_ERR_INVALID_ARG, TAG, "null ssid");
+    const char *pass_str = pass ? pass : "";
 
     nvs_handle_t h;
     esp_err_t err = nvs_open(CY_NS, NVS_READWRITE, &h);
@@ -50,11 +51,39 @@ esp_err_t cybeer_nvs_set_wifi(const char *ssid, const char *pass)
     }
     err = nvs_set_str(h, KEY_WIFI_SSID, ssid);
     if (err == ESP_OK) {
-        err = nvs_set_str(h, KEY_WIFI_PASS, pass);
+        err = nvs_set_str(h, KEY_WIFI_PASS, pass_str);
     }
     if (err == ESP_OK) {
         err = nvs_commit(h);
     }
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t cybeer_nvs_clear_wifi(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CY_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_erase_key(h, KEY_WIFI_SSID);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = ESP_OK;
+    }
+    if (err != ESP_OK) {
+        nvs_close(h);
+        return err;
+    }
+    err = nvs_erase_key(h, KEY_WIFI_PASS);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = ESP_OK;
+    }
+    if (err != ESP_OK) {
+        nvs_close(h);
+        return err;
+    }
+    err = nvs_commit(h);
     nvs_close(h);
     return err;
 }
