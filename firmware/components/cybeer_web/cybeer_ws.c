@@ -306,6 +306,25 @@ void cybeer_ws_timer_tick(int64_t now_us)
     free(printed);
 }
 
+void cybeer_ws_broadcast_leaderboard_update(void)
+{
+    if (!s_hd) {
+        return;
+    }
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return;
+    }
+    cJSON_AddStringToObject(root, "type", "leaderboardUpdate");
+    char *printed = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!printed) {
+        return;
+    }
+    broadcast_text(printed, strlen(printed));
+    free(printed);
+}
+
 void cybeer_ws_on_run_finished(const char *run_id, int64_t duration_us)
 {
     if (!s_hd || !run_id) {

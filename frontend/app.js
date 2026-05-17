@@ -261,6 +261,10 @@
         tickIndex();
         return;
       }
+      if (msg.type === "leaderboardUpdate") {
+        tickIndex();
+        return;
+      }
       if (msg.type === "battery" && typeof msg.percent === "number") {
         applyBatteryPercent(msg.percent);
         return;

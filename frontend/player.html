@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CyBeer — статистика игрока</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Статистика</h1>
+    <p id="hint">Укажите в адресе <code>?id=</code> с UUID участника.</p>
+    <pre id="out" class="mono"></pre>
+  </main>
+  <script>
+    (function () {
+      var p = new URLSearchParams(location.search);
+      var id = p.get("id");
+      var out = document.getElementById("out");
+      var hint = document.getElementById("hint");
+      if (!id) {
+        out.textContent = "";
+        return;
+      }
+      hint.textContent = "Участник: " + id;
+      fetch("/api/participants/" + encodeURIComponent(id) + "/stats")
+        .then(function (r) { return r.json(); })
+        .then(function (j) { out.textContent = JSON.stringify(j, null, 2); })
+        .catch(function (e) { out.textContent = String(e); });
+    })();
+  </script>
+</body>
+</html>

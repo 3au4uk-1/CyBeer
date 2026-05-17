@@ -9,5 +9,6 @@ esp_err_t cybeer_web_start(void);
 httpd_handle_t cybeer_web_get_server(void);
 
 void cybeer_ws_broadcast_state(void);
+void cybeer_ws_broadcast_leaderboard_update(void);
 void cybeer_ws_on_run_finished(const char *run_id, int64_t duration_us);
 void cybeer_ws_timer_tick(int64_t now_us);

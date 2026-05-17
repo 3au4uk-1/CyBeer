@@ -284,6 +284,7 @@ static esp_err_t h_post_claim(httpd_req_t *req)
             cybeer_led_set_fx(CYBEER_LED_FX_PODIUM);
         }
         (void)cybeer_tournament_notify_run_claimed(run_id);
+        cybeer_ws_broadcast_leaderboard_update();
         return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     }
     if (err == ESP_ERR_NOT_FOUND) {
