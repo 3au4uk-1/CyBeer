@@ -10,6 +10,8 @@ esp_err_t cybeer_wifi_init(void);
 esp_err_t cybeer_wifi_start(void);
 bool cybeer_wifi_sta_connected(void);
 void cybeer_wifi_get_sta_ip_str(char *buf, size_t len);
+bool cybeer_wifi_is_started(void);
+bool cybeer_wifi_sta_credentials_configured(void);
 
 /**
  * Register provisioning/admin URI handlers on an existing HTTP server (e.g. cybeer_web).

@@ -99,6 +99,12 @@ static esp_err_t ensure_layout_locked(void)
             return ESP_FAIL;
         }
     }
+    if (stat(CY_ROOT "/www", &st) != 0) {
+        if (mkdir(CY_ROOT "/www", 0775) != 0) {
+            ESP_LOGE(TAG, "mkdir " CY_ROOT "/www failed");
+            return ESP_FAIL;
+        }
+    }
     ESP_RETURN_ON_ERROR(ensure_json_file_locked(PATH_PARTICIPANTS, "[]"), TAG, "participants init");
     ESP_RETURN_ON_ERROR(ensure_json_file_locked(PATH_RUNS, "[]"), TAG, "runs init");
     ESP_RETURN_ON_ERROR(ensure_json_file_locked(PATH_TOURNAMENTS, "[]"), TAG, "tournaments init");

@@ -229,6 +229,14 @@ static esp_err_t h_err_404(httpd_req_t *req, httpd_err_code_t err)
         return httpd_resp_send(req, "Not Found", HTTPD_RESP_USE_STRLEN);
     }
 
+    char sta_ssid[CYBEER_WIFI_SSID_MAX];
+    char sta_pass[CYBEER_WIFI_PASS_MAX];
+    bool have_sta = (cybeer_nvs_get_wifi(sta_ssid, sizeof(sta_ssid), sta_pass, sizeof(sta_pass)) == ESP_OK);
+    if (have_sta) {
+        httpd_resp_set_status(req, "404 Not Found");
+        return httpd_resp_send(req, "Not Found", HTTPD_RESP_USE_STRLEN);
+    }
+
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/setup");
     return httpd_resp_send(req, NULL, 0);
@@ -473,6 +481,18 @@ esp_err_t cybeer_wifi_start(void)
 bool cybeer_wifi_sta_connected(void)
 {
     return s_sta_has_ip;
+}
+
+bool cybeer_wifi_is_started(void)
+{
+    return s_wifi_started;
+}
+
+bool cybeer_wifi_sta_credentials_configured(void)
+{
+    char sta_ssid[CYBEER_WIFI_SSID_MAX];
+    char sta_pass[CYBEER_WIFI_PASS_MAX];
+    return cybeer_nvs_get_wifi(sta_ssid, sizeof(sta_ssid), sta_pass, sizeof(sta_pass)) == ESP_OK;
 }
 
 void cybeer_wifi_get_sta_ip_str(char *buf, size_t len)

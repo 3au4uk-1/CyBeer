@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CyBeer</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🍺</span>
+      <h1>CyBeer</h1>
+    </div>
+    <div class="status-line">
+      <div class="battery" title="Battery (placeholder)" aria-label="Battery placeholder">
+        <span class="battery-icon">🔋</span>
+        <span id="batteryPct">—</span>
+      </div>
+      <span id="stateBadge" class="badge">…</span>
+      <span class="ver" id="fwVer"></span>
+    </div>
+    <nav>
+      <a href="/claim.html">Claim run</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Recent runs</h2>
+      <p class="hint">Updates every 5 seconds. Unclaimed runs show “—” for player.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Duration</th>
+              <th>Player</th>
+              <th>Claimed</th>
+            </tr>
+          </thead>
+          <tbody id="runsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    window.__CYBEER_PAGE__ = "index";
+  </script>
+</body>
+</html>

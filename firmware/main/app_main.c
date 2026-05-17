@@ -2,10 +2,10 @@
 #include "cybeer_fsm.h"
 #include "cybeer_led.h"
 #include "cybeer_storage.h"
+#include "cybeer_web.h"
 #include "cybeer_wifi.h"
 #include "cybeer_switch.h"
 #include "cybeer_timer.h"
-
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -106,9 +106,6 @@ void app_main(void)
     ESP_ERROR_CHECK(cybeer_storage_init());
     ESP_LOGI(TAG, "CyBeer boot");
 
-    ESP_ERROR_CHECK(cybeer_wifi_init());
-    ESP_ERROR_CHECK(cybeer_wifi_start());
-
     cybeer_switch_init();
     cybeer_display_init();
     cybeer_led_init();
@@ -119,6 +116,10 @@ void app_main(void)
     };
     cybeer_fsm_init(&cb);
     cybeer_fsm_reset_to_prep(esp_timer_get_time());
+
+    ESP_ERROR_CHECK(cybeer_wifi_init());
+    ESP_ERROR_CHECK(cybeer_web_start());
+    ESP_ERROR_CHECK(cybeer_wifi_start());
 
     const BaseType_t ok = xTaskCreate(display_task, "display_task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
     if (ok != pdPASS) {
