@@ -8,6 +8,7 @@
 #include "cybeer_switch.h"
 #include "cybeer_timer.h"
 #include "esp_err.h"
+#include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -110,6 +111,12 @@ static void display_task(void *pvParameters)
 void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
+
+    esp_err_t mv = esp_ota_mark_app_valid_cancel_rollback();
+    if (mv != ESP_OK && mv != ESP_ERR_NOT_SUPPORTED && mv != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback: %s", esp_err_to_name(mv));
+    }
+
     ESP_ERROR_CHECK(cybeer_storage_init());
     ESP_ERROR_CHECK(cybeer_battery_init());
     ESP_LOGI(TAG, "CyBeer boot");

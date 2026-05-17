@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cybeer_ota.h"
 #include "cybeer_battery.h"
 #include "cybeer_fsm.h"
 #include "cybeer_ws.h"
@@ -352,7 +353,8 @@ esp_err_t cybeer_web_start(void)
 
     if (httpd_register_uri_handler(s_server, &u_status) != ESP_OK || httpd_register_uri_handler(s_server, &u_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
-        || cybeer_ws_register(s_server) != ESP_OK || httpd_register_uri_handler(s_server, &u_static) != ESP_OK) {
+        || cybeer_ota_register_handlers(s_server) != ESP_OK || cybeer_ws_register(s_server) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_static) != ESP_OK) {
         ESP_LOGE(TAG, "register uri failed");
         httpd_stop(s_server);
         s_server = NULL;
