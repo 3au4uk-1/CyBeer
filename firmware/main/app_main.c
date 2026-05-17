@@ -76,10 +76,6 @@ static void display_task(void *pvParameters)
             break;
         }
 
-        /*
-         * Stub: when claimed flow exists, FINISHED timeline can yield CLAIM_PENDING in cybeer_led.c
-         * (CYBEER_LED_POST_FINISH_CLAIM_PENDING). M1 completes FINISHED animation then ambient.
-         */
         cybeer_led_fx_t led_fx = CYBEER_LED_FX_AMBIENT;
         switch (snap.state) {
         case CYBEER_STATE_PREP:

@@ -92,9 +92,12 @@ static esp_err_t send_json_err(httpd_req_t *req, const char *status, const char 
 
 static esp_err_t require_admin(httpd_req_t *req)
 {
-    if (!admin_pin_ok(req)) {
+    if (!cybeer_nvs_admin_pin_is_configured()) {
         return send_json_err(req, "403 Forbidden",
-                             "{\"error\":\"forbidden: set admin PIN in NVS or bad X-Admin-Pin\"}");
+                             "{\"error\":\"admin pin not configured; use POST /api/admin/pin/setup\"}");
+    }
+    if (!admin_pin_ok(req)) {
+        return send_json_err(req, "401 Unauthorized", "{\"error\":\"missing or invalid X-Admin-Pin\"}");
     }
     return ESP_OK;
 }

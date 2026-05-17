@@ -7,6 +7,7 @@
 #include "cybeer_battery.h"
 #include "cybeer_config.h"
 #include "cybeer_fsm.h"
+#include "cybeer_led.h"
 #include "cybeer_ws.h"
 #include "cybeer_storage.h"
 #include "cybeer_tournament.h"
@@ -154,6 +155,57 @@ static void copy_path_no_query(const char *uri, char *out, size_t out_len)
     out[n] = '\0';
 }
 
+static bool parse_participant_stats_path(const char *path, char pid_out[40])
+{
+    const char *pfx = "/api/participants/";
+    if (strncmp(path, pfx, strlen(pfx)) != 0) {
+        return false;
+    }
+    const char *rest = path + strlen(pfx);
+    const char *suf = strstr(rest, "/stats");
+    if (!suf || strcmp(suf, "/stats") != 0) {
+        return false;
+    }
+    size_t id_len = (size_t)(suf - rest);
+    if (id_len == 0 || id_len >= 40) {
+        return false;
+    }
+    memcpy(pid_out, rest, id_len);
+    pid_out[id_len] = '\0';
+    return strchr(pid_out, '/') == NULL;
+}
+
+static esp_err_t h_get_participant_stats(httpd_req_t *req)
+{
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char pid[40];
+    if (!parse_participant_stats_path(path, pid)) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "{\"error\":\"uri\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    cybeer_stats_t st = { 0 };
+    if (cybeer_storage_get_participant_stats(pid, &st) != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "{\"error\":\"storage\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    cJSON_AddStringToObject(root, "participantId", pid);
+    cJSON_AddNumberToObject(root, "runCount", (double)st.count);
+    cJSON_AddNumberToObject(root, "bestDurationUs", (double)st.best_us);
+    cJSON_AddNumberToObject(root, "worstDurationUs", (double)st.worst_us);
+    cJSON_AddNumberToObject(root, "avgDurationUs", (double)st.avg_us);
+    cJSON_AddNumberToObject(root, "lastDurationUs", (double)st.last_us);
+    return json_send(req, root);
+}
+
 static esp_err_t h_post_claim(httpd_req_t *req)
 {
     char path[160];
@@ -226,6 +278,11 @@ static esp_err_t h_post_claim(httpd_req_t *req)
     esp_err_t err = cybeer_storage_claim_run(run_id, arg, by_pid);
     httpd_resp_set_type(req, "application/json");
     if (err == ESP_OK) {
+        cybeer_run_t claimed_run;
+        if (cybeer_storage_get_run(run_id, &claimed_run) == ESP_OK
+            && cybeer_storage_run_qualifies_podium_led(&claimed_run)) {
+            cybeer_led_set_fx(CYBEER_LED_FX_PODIUM);
+        }
         (void)cybeer_tournament_notify_run_claimed(run_id);
         return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     }
@@ -897,6 +954,12 @@ esp_err_t cybeer_web_start(void)
     httpd_uri_t u_parts = {
         .uri = "/api/participants", .method = HTTP_GET, .handler = h_get_participants, .user_ctx = NULL
     };
+    httpd_uri_t u_part_stats = {
+        .uri = "/api/participants/*/stats",
+        .method = HTTP_GET,
+        .handler = h_get_participant_stats,
+        .user_ctx = NULL
+    };
     httpd_uri_t u_claim = { .uri = "/api/runs/*/claim", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL };
     httpd_uri_t u_admin_pin = {
         .uri = "/api/admin/pin/setup", .method = HTTP_POST, .handler = h_post_admin_pin_setup, .user_ctx = NULL
@@ -947,7 +1010,9 @@ esp_err_t cybeer_web_start(void)
     httpd_uri_t u_static = { .uri = "/*", .method = HTTP_GET, .handler = h_static, .user_ctx = NULL };
 
     if (httpd_register_uri_handler(s_server, &u_status) != ESP_OK || httpd_register_uri_handler(s_server, &u_runs) != ESP_OK
-        || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_part_stats) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_active_pub) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_assign) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_start) != ESP_OK

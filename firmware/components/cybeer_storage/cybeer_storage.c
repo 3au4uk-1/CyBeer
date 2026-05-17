@@ -637,6 +637,45 @@ esp_err_t cybeer_storage_get_participant_stats(const char *pid, cybeer_stats_t *
     return ESP_OK;
 }
 
+bool cybeer_storage_run_qualifies_podium_led(const cybeer_run_t *run)
+{
+    if (!run || !run->claimed || !run->id[0] || !run->participant_id[0]) {
+        return false;
+    }
+
+    if (take_mtx() != ESP_OK) {
+        return false;
+    }
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return false;
+    }
+
+    int n_faster_global = 0;
+    int n_faster_same = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, runs)
+    {
+        cybeer_run_t r;
+        run_from_json(item, &r);
+        if (!r.claimed) {
+            continue;
+        }
+        if (r.duration_us < run->duration_us) {
+            n_faster_global++;
+        }
+        if (strcmp(r.participant_id, run->participant_id) == 0 && r.duration_us < run->duration_us) {
+            n_faster_same++;
+        }
+    }
+    cJSON_Delete(runs);
+    give_mtx();
+
+    return (n_faster_global < 3) || (n_faster_same == 0);
+}
+
 const char *cybeer_storage_runs_json(void)
 {
     if (take_mtx() != ESP_OK) {

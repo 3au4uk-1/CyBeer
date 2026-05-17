@@ -12,9 +12,6 @@
 static const char *TAG = "cybeer_led";
 #define CYBEER_LED_FINISHED_FLASH_US    180000
 #define CYBEER_LED_FINISHED_DIM_HOLD_US 700000
-#ifndef CYBEER_LED_POST_FINISH_CLAIM_PENDING
-#define CYBEER_LED_POST_FINISH_CLAIM_PENDING 0
-#endif
 static led_strip_handle_t s_strip;
 static uint8_t s_led_count = CYBEER_LED_COUNT_DEFAULT;
 /** Global brightness scale [1,255]; applied alongside per-effect offsets. */
@@ -119,11 +116,12 @@ static esp_err_t render_frame(int64_t now_us)
         if (dt < dim_until) {
             return draw_all(38, 40, 42);
         }
-#if CYBEER_LED_POST_FINISH_CLAIM_PENDING
-        return render_claim_pending(now_us);
-#else
+        char unclaimed[40];
+        if (cybeer_storage_get_latest_unclaimed_run_id(unclaimed, sizeof(unclaimed)) == ESP_OK
+            && unclaimed[0] != '\0') {
+            return render_claim_pending(now_us);
+        }
         return render_ambient(now_us);
-#endif
     }
     switch (rq) {
     case CYBEER_LED_FX_AMBIENT:

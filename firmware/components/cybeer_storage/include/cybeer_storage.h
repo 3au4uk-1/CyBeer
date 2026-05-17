@@ -62,6 +62,9 @@ esp_err_t cybeer_storage_claim_run(const char *run_id, const char *name_or_pid, 
 esp_err_t cybeer_storage_get_latest_unclaimed_run_id(char *out_id, size_t out_len);
 esp_err_t cybeer_storage_get_participant_stats(const char *pid, cybeer_stats_t *out);
 
+/** True if claimed run is global top-3 (by lowest duration_us) or personal best for participant_id. */
+bool cybeer_storage_run_qualifies_podium_led(const cybeer_run_t *run);
+
 /** Static buffers; copy before calling again or taking the filesystem mutex elsewhere. */
 const char *cybeer_storage_runs_json(void);
 const char *cybeer_storage_participants_json(void);
