@@ -1,5 +1,6 @@
 #include "cybeer_display.h"
 #include "cybeer_fsm.h"
+#include "cybeer_led.h"
 #include "cybeer_switch.h"
 #include "cybeer_timer.h"
 
@@ -21,6 +22,8 @@ static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
 static void display_task(void *pvParameters)
 {
     (void)pvParameters;
+
+    cybeer_state_t fsm_prev = CYBEER_STATE_PREP;
 
     for (;;) {
         const int64_t now = esp_timer_get_time();
@@ -47,7 +50,37 @@ static void display_task(void *pvParameters)
             break;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+        /*
+         * Stub: when claimed flow exists, FINISHED timeline can yield CLAIM_PENDING in cybeer_led.c
+         * (CYBEER_LED_POST_FINISH_CLAIM_PENDING). M1 completes FINISHED animation then ambient.
+         */
+        cybeer_led_fx_t led_fx = CYBEER_LED_FX_AMBIENT;
+        switch (snap.state) {
+        case CYBEER_STATE_PREP:
+            led_fx = CYBEER_LED_FX_ARMED;
+            break;
+        case CYBEER_STATE_RUNNING:
+            led_fx = CYBEER_LED_FX_RUNNING;
+            break;
+        case CYBEER_STATE_READY:
+            led_fx = CYBEER_LED_FX_AMBIENT;
+            break;
+        case CYBEER_STATE_FINISHED:
+            if (fsm_prev != CYBEER_STATE_FINISHED) {
+                cybeer_led_set_fx(CYBEER_LED_FX_FINISHED);
+            }
+            break;
+        default:
+            break;
+        }
+        if (snap.state != CYBEER_STATE_FINISHED) {
+            cybeer_led_set_fx(led_fx);
+        }
+        fsm_prev = snap.state;
+
+        cybeer_led_task_tick(now);
+
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 
@@ -58,6 +91,7 @@ void app_main(void)
 
     cybeer_switch_init();
     cybeer_display_init();
+    cybeer_led_init();
 
     cybeer_fsm_callbacks_t cb = {
         .on_finished = on_finished_placeholder,

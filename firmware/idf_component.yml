@@ -1,0 +1,3 @@
+## Managed components (Espressif LED strip driver)
+dependencies:
+  espressif/led_strip: "^3.0.0"
