@@ -1,0 +1,2 @@
+dependencies:
+  joltwallet/esp_littlefs: "^2.10.0"
