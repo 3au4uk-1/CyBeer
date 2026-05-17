@@ -1,3 +1,4 @@
+#include "cybeer_battery.h"
 #include "cybeer_display.h"
 #include "cybeer_fsm.h"
 #include "cybeer_led.h"
@@ -32,6 +33,7 @@ static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
         ESP_LOGE(TAG, "storage_add_run failed: %s", esp_err_to_name(err));
     } else {
         ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
+        cybeer_ws_on_run_finished(run.id, run.duration_us);
     }
 }
 
@@ -51,6 +53,11 @@ static void display_task(void *pvParameters)
         }
 
         cybeer_fsm_snapshot_t snap = cybeer_fsm_snapshot();
+        if (snap.state != fsm_prev) {
+            cybeer_ws_broadcast_state();
+        }
+        cybeer_ws_timer_tick(now);
+
         switch (snap.state) {
         case CYBEER_STATE_RUNNING:
             cybeer_display_show_us(cybeer_timer_elapsed_us(now));
@@ -104,6 +111,7 @@ void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(cybeer_storage_init());
+    ESP_ERROR_CHECK(cybeer_battery_init());
     ESP_LOGI(TAG, "CyBeer boot");
 
     cybeer_switch_init();

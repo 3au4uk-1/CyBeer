@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cybeer_battery.h"
 #include "cybeer_fsm.h"
+#include "cybeer_ws.h"
 #include "cybeer_storage.h"
 #include "cybeer_wifi.h"
 
@@ -68,7 +70,7 @@ static esp_err_t h_get_status(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
     }
     cJSON_AddStringToObject(root, "state", fsm_state_str(fsm.state));
-    cJSON_AddNumberToObject(root, "batteryPercent", 0);
+    cJSON_AddNumberToObject(root, "batteryPercent", (double)cybeer_battery_get_percent());
     cJSON *wifi = cJSON_CreateObject();
     if (!wifi) {
         cJSON_Delete(root);
@@ -350,7 +352,7 @@ esp_err_t cybeer_web_start(void)
 
     if (httpd_register_uri_handler(s_server, &u_status) != ESP_OK || httpd_register_uri_handler(s_server, &u_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
-        || httpd_register_uri_handler(s_server, &u_static) != ESP_OK) {
+        || cybeer_ws_register(s_server) != ESP_OK || httpd_register_uri_handler(s_server, &u_static) != ESP_OK) {
         ESP_LOGE(TAG, "register uri failed");
         httpd_stop(s_server);
         s_server = NULL;
@@ -359,4 +361,9 @@ esp_err_t cybeer_web_start(void)
 
     ESP_LOGI(TAG, "HTTP server on :80 (static " WWW_ROOT ")");
     return ESP_OK;
+}
+
+httpd_handle_t cybeer_web_get_server(void)
+{
+    return s_server;
 }

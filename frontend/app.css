@@ -66,6 +66,18 @@ body {
   font-size: 0.9rem;
 }
 
+.battery.bat-low {
+  color: var(--danger);
+}
+
+.battery.bat-mid {
+  color: var(--amber);
+}
+
+.battery.bat-high {
+  color: var(--ok);
+}
+
 .badge {
   display: inline-block;
   padding: 0.2rem 0.55rem;

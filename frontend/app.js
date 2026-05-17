@@ -29,12 +29,35 @@
     }
   }
 
+  function applyBatteryPercent(pct) {
+    const wrap = document.getElementById("batteryWrap");
+    const icon = document.getElementById("batteryIcon");
+    const label = document.getElementById("batteryPct");
+    if (!wrap || !icon || !label) return;
+    if (typeof pct !== "number" || !Number.isFinite(pct)) {
+      label.textContent = "—";
+      icon.textContent = "🔋";
+      wrap.classList.remove("bat-low", "bat-mid", "bat-high");
+      wrap.title = "Battery";
+      wrap.setAttribute("aria-label", "Battery unknown");
+      return;
+    }
+    const p = Math.max(0, Math.min(100, Math.round(pct)));
+    label.textContent = `${p}%`;
+    icon.textContent = p < 20 ? "🪫" : "🔋";
+    wrap.classList.remove("bat-low", "bat-mid", "bat-high");
+    if (p < 20) wrap.classList.add("bat-low");
+    else if (p < 60) wrap.classList.add("bat-mid");
+    else wrap.classList.add("bat-high");
+    wrap.title = `Battery ${p}%`;
+    wrap.setAttribute("aria-label", `Battery ${p} percent`);
+  }
+
   function renderStatus(s) {
     const badge = document.getElementById("stateBadge");
-    const bat = document.getElementById("batteryPct");
     const ver = document.getElementById("fwVer");
     if (badge) badge.textContent = s.state || "—";
-    if (bat) bat.textContent = `${s.batteryPercent ?? "—"}%`;
+    applyBatteryPercent(s.batteryPercent);
     if (ver) ver.textContent = s.firmwareVersion ? `fw ${s.firmwareVersion}` : "";
   }
 
@@ -135,10 +158,87 @@
     });
   }
 
+  function connectLiveWs() {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${proto}//${window.location.host}/ws`;
+    let ws;
+    let reconnectTimer;
+
+    function scheduleReconnect() {
+      if (reconnectTimer) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connectLiveWs();
+      }, 2000);
+    }
+
+    try {
+      ws = new WebSocket(url);
+    } catch (_) {
+      scheduleReconnect();
+      return;
+    }
+
+    ws.onopen = () => {
+      try {
+        ws.send(".");
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    ws.onmessage = (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch (_) {
+        return;
+      }
+      if (!msg || typeof msg.type !== "string") return;
+
+      if (msg.type === "timer" && typeof msg.elapsedUs === "number") {
+        const el = document.getElementById("live-timer");
+        if (el) el.textContent = formatDuration(msg.elapsedUs);
+        return;
+      }
+      if (msg.type === "state" && typeof msg.state === "string") {
+        const badge = document.getElementById("stateBadge");
+        if (badge) badge.textContent = msg.state;
+        const lt = document.getElementById("live-timer");
+        if (lt && msg.state !== "RUNNING" && msg.state !== "FINISHED") {
+          lt.textContent = "—";
+        }
+        return;
+      }
+      if (msg.type === "runFinished") {
+        const lt = document.getElementById("live-timer");
+        if (lt && typeof msg.durationUs === "number") {
+          lt.textContent = formatDuration(msg.durationUs);
+        }
+        tickIndex();
+        return;
+      }
+      if (msg.type === "battery" && typeof msg.percent === "number") {
+        applyBatteryPercent(msg.percent);
+        return;
+      }
+    };
+
+    ws.onclose = () => scheduleReconnect();
+    ws.onerror = () => {
+      try {
+        ws.close();
+      } catch (_) {
+        /* ignore */
+      }
+    };
+  }
+
   const page = window.__CYBEER_PAGE__;
   if (page === "index") {
     tickIndex();
     setInterval(tickIndex, 5000);
+    connectLiveWs();
   } else if (page === "claim") {
     tickClaimTarget();
     setInterval(tickClaimTarget, 5000);

@@ -13,8 +13,8 @@
       <h1>CyBeer</h1>
     </div>
     <div class="status-line">
-      <div class="battery" title="Battery (placeholder)" aria-label="Battery placeholder">
-        <span class="battery-icon">🔋</span>
+      <div class="battery" id="batteryWrap" title="Battery" aria-label="Battery">
+        <span class="battery-icon" id="batteryIcon" aria-hidden="true">🔋</span>
         <span id="batteryPct">—</span>
       </div>
       <span id="stateBadge" class="badge">…</span>
@@ -27,6 +27,7 @@
 
   <main>
     <section class="panel">
+      <p class="live-timer-line">Live timer: <span id="live-timer">—</span></p>
       <h2>Recent runs</h2>
       <p class="hint">Updates every 5 seconds. Unclaimed runs show “—” for player.</p>
       <div class="table-wrap">
