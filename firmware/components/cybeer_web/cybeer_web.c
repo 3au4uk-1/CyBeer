@@ -5,6 +5,7 @@
 
 #include "cybeer_ota.h"
 #include "cybeer_battery.h"
+#include "cybeer_config.h"
 #include "cybeer_fsm.h"
 #include "cybeer_ws.h"
 #include "cybeer_storage.h"
@@ -15,6 +16,9 @@
 #include "cJSON.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_restart.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <sys/stat.h>
 
 static const char *TAG = "cybeer_web";
@@ -82,6 +86,8 @@ static esp_err_t h_get_status(httpd_req_t *req)
     cJSON_AddStringToObject(wifi, "staIp", sta_ip);
     cJSON_AddItemToObject(root, "wifi", wifi);
     cJSON_AddNumberToObject(root, "ledCount", (double)led_count);
+    cJSON_AddNumberToObject(root, "ledBrightness", (double)led_bright);
+    cJSON_AddBoolToObject(root, "adminPinConfigured", cybeer_nvs_admin_pin_is_configured());
     cJSON_AddStringToObject(root, "firmwareVersion", "1.0.0");
     cJSON_AddStringToObject(root, "unclaimedRunId", unclaimed);
     cJSON_AddItemToObject(root, "activeMatch", cJSON_CreateNull());
@@ -237,6 +243,390 @@ static esp_err_t h_post_claim(httpd_req_t *req)
     return httpd_resp_send(req, "{\"error\":\"storage\"}", HTTPD_RESP_USE_STRLEN);
 }
 
+#define ADMIN_HDR_PIN "X-Admin-Pin"
+#define ADMIN_BODY_MAX 4096
+
+static esp_err_t send_json_text(httpd_req_t *req, const char *http_status, const char *json_body)
+{
+    httpd_resp_set_status(req, http_status);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, json_body, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t read_http_body(httpd_req_t *req, char *buf, size_t cap)
+{
+    ESP_RETURN_ON_FALSE(buf && cap > 8, ESP_ERR_INVALID_ARG, TAG, "cap");
+    if (req->content_len <= 0 || req->content_len >= (ssize_t)(cap)) {
+        return ESP_FAIL;
+    }
+    int n = httpd_req_recv(req, buf, (size_t)req->content_len);
+    if (n <= 0) {
+        return ESP_FAIL;
+    }
+    buf[n] = '\0';
+    return ESP_OK;
+}
+
+static esp_err_t require_admin_pin(httpd_req_t *req)
+{
+    if (!cybeer_nvs_admin_pin_is_configured()) {
+        return send_json_text(req, "403 Forbidden",
+                              "{\"error\":\"admin pin not configured; use POST /api/admin/pin/setup\"}");
+    }
+    char pin_raw[96];
+    if (httpd_req_get_hdr_value_str(req, ADMIN_HDR_PIN, pin_raw, sizeof(pin_raw)) != ESP_OK) {
+        return send_json_text(req, "401 Unauthorized", "{\"error\":\"missing X-Admin-Pin header\"}");
+    }
+    if (cybeer_admin_verify_pin(pin_raw) != ESP_OK) {
+        return send_json_text(req, "401 Unauthorized", "{\"error\":\"invalid pin\"}");
+    }
+    return ESP_OK;
+}
+
+static bool admin_parse_run_id(const char *path_no_query, char id_out[40])
+{
+    const char *pfx = "/api/admin/runs/";
+    if (strncmp(path_no_query, pfx, strlen(pfx)) != 0) {
+        return false;
+    }
+    const char *id = path_no_query + strlen(pfx);
+    if (id[0] == '\0' || strchr(id, '/') != NULL) {
+        return false;
+    }
+    strncpy(id_out, id, 39);
+    id_out[39] = '\0';
+    return id_out[0] != '\0';
+}
+
+static void merge_run_optional_json(const cJSON *obj, cybeer_run_t *run)
+{
+    const cJSON *j;
+    j = cJSON_GetObjectItemCaseSensitive(obj, "id");
+    if (cJSON_IsString(j) && j->valuestring) {
+        strncpy(run->id, j->valuestring, sizeof(run->id) - 1);
+        run->id[sizeof(run->id) - 1] = '\0';
+    }
+    j = cJSON_GetObjectItemCaseSensitive(obj, "participant_id");
+    if (cJSON_IsString(j) && j->valuestring) {
+        strncpy(run->participant_id, j->valuestring, sizeof(run->participant_id) - 1);
+        run->participant_id[sizeof(run->participant_id) - 1] = '\0';
+    }
+    j = cJSON_GetObjectItemCaseSensitive(obj, "duration_us");
+    if (cJSON_IsNumber(j)) {
+        run->duration_us = (int64_t)j->valuedouble;
+    }
+    j = cJSON_GetObjectItemCaseSensitive(obj, "finished_at");
+    if (cJSON_IsString(j) && j->valuestring) {
+        strncpy(run->finished_at, j->valuestring, sizeof(run->finished_at) - 1);
+        run->finished_at[sizeof(run->finished_at) - 1] = '\0';
+    }
+    j = cJSON_GetObjectItemCaseSensitive(obj, "claimed");
+    if (cJSON_IsBool(j)) {
+        run->claimed = cJSON_IsTrue(j);
+    }
+    j = cJSON_GetObjectItemCaseSensitive(obj, "tournament_match_id");
+    if (cJSON_IsString(j) && j->valuestring) {
+        strncpy(run->tournament_match_id, j->valuestring, sizeof(run->tournament_match_id) - 1);
+        run->tournament_match_id[sizeof(run->tournament_match_id) - 1] = '\0';
+    }
+}
+
+static esp_err_t h_post_admin_pin_setup(httpd_req_t *req)
+{
+    if (cybeer_nvs_admin_pin_is_configured()) {
+        return send_json_text(req, "409 Conflict", "{\"error\":\"admin pin already set\"}");
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json\"}");
+    }
+    const cJSON *jpin = cJSON_GetObjectItemCaseSensitive(root, "pin");
+    const char *pin = (cJSON_IsString(jpin) && jpin->valuestring) ? jpin->valuestring : NULL;
+    cJSON_Delete(root);
+    if (!pin || strlen(pin) < 4 || strlen(pin) > 32) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"pin length 4-32\"}");
+    }
+    esp_err_t err = cybeer_admin_pin_first_setup(pin);
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "{\"error\":\"nvs\"}", HTTPD_RESP_USE_STRLEN);
+    }
+    return send_json_text(req, "200 OK", "{\"ok\":true}");
+}
+
+static esp_err_t h_post_admin_runs(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root) {
+            cJSON_Delete(root);
+        }
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json object\"}");
+    }
+    cybeer_run_t run = { 0 };
+    run.participant_id[0] = '\0';
+    run.tournament_match_id[0] = '\0';
+    run.claimed = false;
+    merge_run_optional_json(root, &run);
+    cJSON_Delete(root);
+    if (run.id[0] == '\0') {
+        cybeer_format_uuid_v4(run.id);
+    }
+    if (run.finished_at[0] == '\0') {
+        cybeer_storage_iso8601_now(run.finished_at);
+    }
+
+    esp_err_t err = cybeer_storage_add_run_manual(&run);
+    if (err == ESP_OK) {
+        cJSON *resp = cJSON_CreateObject();
+        if (!resp) {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        }
+        cJSON_AddStringToObject(resp, "id", run.id);
+        return json_send(req, resp);
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_text(req, "409 Conflict", "{\"error\":\"duplicate run id\"}");
+    }
+    return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
+}
+
+static esp_err_t h_patch_admin_run(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char run_id[40];
+    if (!admin_parse_run_id(path, run_id)) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+    cybeer_run_t cur;
+    if (cybeer_storage_get_run(run_id, &cur) != ESP_OK) {
+        return send_json_text(req, "404 Not Found", "{\"error\":\"unknown run\"}");
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root || !cJSON_IsObject(root)) {
+        if (root) {
+            cJSON_Delete(root);
+        }
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json object\"}");
+    }
+    strncpy(cur.id, run_id, sizeof(cur.id) - 1);
+    cur.id[sizeof(cur.id) - 1] = '\0';
+    merge_run_optional_json(root, &cur);
+    /* Do not replace id via body on PATCH — keep URI id */
+    strncpy(cur.id, run_id, sizeof(cur.id) - 1);
+    cur.id[sizeof(cur.id) - 1] = '\0';
+    cJSON_Delete(root);
+
+    esp_err_t err = cybeer_storage_update_run(run_id, &cur);
+    if (err == ESP_OK) {
+        return send_json_text(req, "200 OK", "{\"ok\":true}");
+    }
+    return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
+}
+
+static esp_err_t h_delete_admin_run(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char run_id[40];
+    if (!admin_parse_run_id(path, run_id)) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+    esp_err_t err = cybeer_storage_delete_run(run_id);
+    if (err == ESP_OK) {
+        return send_json_text(req, "200 OK", "{\"ok\":true}");
+    }
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_text(req, "404 Not Found", "{\"error\":\"unknown run\"}");
+    }
+    return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
+}
+
+static esp_err_t h_delete_admin_data_reset(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    esp_err_t err = cybeer_storage_reset_all_data();
+    if (err != ESP_OK) {
+        return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
+    }
+    return send_json_text(req, "200 OK", "{\"ok\":true}");
+}
+
+static bool export_wants_csv(const char *full_uri)
+{
+    const char *q = strchr(full_uri, '?');
+    if (!q) {
+        return false;
+    }
+    q++;
+    char buf[144];
+    snprintf(buf, sizeof(buf), "%s", q);
+    char *t = strtok(buf, "&");
+    while (t) {
+        char *eq = strchr(t, '=');
+        if (eq) {
+            *eq = '\0';
+            const char *val = eq + 1;
+            if (strcasecmp(t, "format") == 0 && strcasecmp(val, "csv") == 0) {
+                return true;
+            }
+            if (strcasecmp(t, "format") == 0 && strcasecmp(val, "json") == 0) {
+                return false;
+            }
+        }
+        t = strtok(NULL, "&");
+    }
+    return false;
+}
+
+static esp_err_t h_get_export(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    bool csv_mode = export_wants_csv(req->uri);
+
+    const char *raw_runs = cybeer_storage_runs_json();
+    const char *raw_parts = cybeer_storage_participants_json();
+
+    if (!csv_mode) {
+        cJSON *runs = cJSON_Parse(raw_runs && raw_runs[0] ? raw_runs : "[]");
+        if (!runs) {
+            runs = cJSON_CreateArray();
+        }
+        if (!cJSON_IsArray(runs)) {
+            cJSON_Delete(runs);
+            runs = cJSON_CreateArray();
+        }
+        cJSON *parts = cJSON_Parse(raw_parts && raw_parts[0] ? raw_parts : "[]");
+        if (!parts) {
+            parts = cJSON_CreateArray();
+        }
+        if (!cJSON_IsArray(parts)) {
+            cJSON_Delete(parts);
+            parts = cJSON_CreateArray();
+        }
+
+        cJSON *pack = cJSON_CreateObject();
+        if (!pack) {
+            cJSON_Delete(runs);
+            cJSON_Delete(parts);
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+        }
+        cJSON_AddItemToObject(pack, "runs", runs);
+        cJSON_AddItemToObject(pack, "participants", parts);
+        esp_err_t e = json_send(req, pack);
+        return e;
+    }
+
+    cJSON *arr = cJSON_Parse(raw_runs && raw_runs[0] ? raw_runs : "[]");
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) {
+            cJSON_Delete(arr);
+        }
+        arr = cJSON_CreateArray();
+    }
+
+    httpd_resp_set_status(req, "200 OK");
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    esp_err_t e = httpd_resp_sendstr_chunk(req, "id,participant_id,duration_us,finished_at,claimed,tournament_match_id\r\n");
+    if (e != ESP_OK) {
+        cJSON_Delete(arr);
+        return e;
+    }
+
+    char line_buf[576];
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, arr)
+    {
+        cybeer_run_t r;
+        memset(&r, 0, sizeof(r));
+        merge_run_optional_json(it, &r);
+
+        snprintf(line_buf, sizeof(line_buf), "%s,%s,%lld,%s,%s,%s\r\n", r.id, r.participant_id,
+                 (long long)r.duration_us, r.finished_at, r.claimed ? "true" : "false", r.tournament_match_id);
+        e = httpd_resp_sendstr_chunk(req, line_buf);
+        if (e != ESP_OK) {
+            break;
+        }
+    }
+
+    if (e == ESP_OK) {
+        e = httpd_resp_send_chunk(req, NULL, 0);
+    }
+    cJSON_Delete(arr);
+    return e;
+}
+
+static esp_err_t h_put_settings(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json\"}");
+    }
+    const cJSON *jlc = cJSON_GetObjectItemCaseSensitive(root, "ledCount");
+    const cJSON *jbr = cJSON_GetObjectItemCaseSensitive(root, "brightness");
+    cJSON_Delete(root);
+
+    if (!cJSON_IsNumber(jlc) || !cJSON_IsNumber(jbr)) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"ledCount and brightness numbers\"}");
+    }
+    int led = (int)jlc->valuedouble;
+    int br = (int)jbr->valuedouble;
+    if (led < 1 || led > CYBEER_LED_COUNT_MAX || br < 1 || br > 255) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"out of range\"}");
+    }
+
+    if (cybeer_nvs_set_led_count((uint8_t)led) != ESP_OK || cybeer_nvs_set_led_brightness((uint8_t)br) != ESP_OK) {
+        return send_json_text(req, "500 Internal Server Error", "{\"error\":\"nvs\"}");
+    }
+
+    if (send_json_text(req, "200 OK", "{\"ok\":true,\"restarting\":true}") != ESP_OK) {
+        /* still restart — response may truncate */
+    }
+    vTaskDelay(pdMS_TO_TICKS(250));
+    esp_restart();
+    return ESP_OK;
+}
+
 static bool path_has_dotdot(const char *s)
 {
     return strstr(s, "..") != NULL;
@@ -349,10 +739,40 @@ esp_err_t cybeer_web_start(void)
         .uri = "/api/participants", .method = HTTP_GET, .handler = h_get_participants, .user_ctx = NULL
     };
     httpd_uri_t u_claim = { .uri = "/api/runs/*/claim", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL };
+    httpd_uri_t u_admin_pin = {
+        .uri = "/api/admin/pin/setup", .method = HTTP_POST, .handler = h_post_admin_pin_setup, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_runs = {
+        .uri = "/api/admin/runs", .method = HTTP_POST, .handler = h_post_admin_runs, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_run_patch = {
+        .uri = "/api/admin/runs/*", .method = HTTP_PATCH, .handler = h_patch_admin_run, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_run_del = {
+        .uri = "/api/admin/runs/*", .method = HTTP_DELETE, .handler = h_delete_admin_run, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_reset = {
+        .uri = "/api/admin/data/reset",
+        .method = HTTP_DELETE,
+        .handler = h_delete_admin_data_reset,
+        .user_ctx = NULL
+    };
+    httpd_uri_t u_export = { .uri = "/api/export", .method = HTTP_GET, .handler = h_get_export, .user_ctx = NULL };
+    httpd_uri_t u_settings_put = {
+        .uri = "/api/settings", .method = HTTP_PUT, .handler = h_put_settings, .user_ctx = NULL
+    };
+
     httpd_uri_t u_static = { .uri = "/*", .method = HTTP_GET, .handler = h_static, .user_ctx = NULL };
 
     if (httpd_register_uri_handler(s_server, &u_status) != ESP_OK || httpd_register_uri_handler(s_server, &u_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_pin) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_runs) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_run_patch) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_run_del) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_reset) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_export) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_settings_put) != ESP_OK
         || cybeer_ota_register_handlers(s_server) != ESP_OK || cybeer_ws_register(s_server) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_static) != ESP_OK) {
         ESP_LOGE(TAG, "register uri failed");

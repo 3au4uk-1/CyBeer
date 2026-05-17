@@ -272,6 +272,192 @@ esp_err_t cybeer_storage_add_run(const cybeer_run_t *run)
     return err;
 }
 
+static bool run_exists_locked(const char *run_id)
+{
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        return false;
+    }
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, runs)
+    {
+        cybeer_run_t r;
+        run_from_json(item, &r);
+        if (strcmp(r.id, run_id) == 0) {
+            cJSON_Delete(runs);
+            return true;
+        }
+    }
+    cJSON_Delete(runs);
+    return false;
+}
+
+esp_err_t cybeer_storage_add_run_manual(cybeer_run_t *run)
+{
+    ESP_RETURN_ON_FALSE(run, ESP_ERR_INVALID_ARG, TAG, "run");
+
+    if (run->id[0] == '\0') {
+        cybeer_format_uuid_v4(run->id);
+    }
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    if (run_exists_locked(run->id)) {
+        give_mtx();
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    cJSON *item = run_to_json_new(run);
+    if (!item) {
+        cJSON_Delete(runs);
+        give_mtx();
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON_AddItemToArray(runs, item);
+
+    esp_err_t err = persist_json_locked(PATH_RUNS, runs);
+    cJSON_Delete(runs);
+    give_mtx();
+    return err;
+}
+
+esp_err_t cybeer_storage_get_run(const char *run_id, cybeer_run_t *out)
+{
+    ESP_RETURN_ON_FALSE(run_id && out, ESP_ERR_INVALID_ARG, TAG, "args");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, runs)
+    {
+        cybeer_run_t r;
+        run_from_json(item, &r);
+        if (strcmp(r.id, run_id) != 0) {
+            continue;
+        }
+        *out = r;
+        ret = ESP_OK;
+        break;
+    }
+
+    cJSON_Delete(runs);
+    give_mtx();
+    return ret;
+}
+
+esp_err_t cybeer_storage_update_run(const char *run_id, const cybeer_run_t *run)
+{
+    ESP_RETURN_ON_FALSE(run_id && run && run->id[0], ESP_ERR_INVALID_ARG, TAG, "args");
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    bool found = false;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, runs)
+    {
+        cybeer_run_t r;
+        run_from_json(item, &r);
+        if (strcmp(r.id, run_id) != 0) {
+            continue;
+        }
+        found = true;
+        json_apply_run(item, run);
+        break;
+    }
+
+    if (!found) {
+        cJSON_Delete(runs);
+        give_mtx();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    esp_err_t err = persist_json_locked(PATH_RUNS, runs);
+    cJSON_Delete(runs);
+    give_mtx();
+    return err;
+}
+
+esp_err_t cybeer_storage_delete_run(const char *run_id)
+{
+    ESP_RETURN_ON_FALSE(run_id, ESP_ERR_INVALID_ARG, TAG, "id");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    int n = cJSON_GetArraySize(runs);
+    int remove_idx = -1;
+    for (int i = 0; i < n; i++) {
+        cJSON *elem = cJSON_GetArrayItem(runs, i);
+        cybeer_run_t r;
+        run_from_json(elem, &r);
+        if (strcmp(r.id, run_id) == 0) {
+            remove_idx = i;
+            break;
+        }
+    }
+
+    if (remove_idx < 0) {
+        cJSON_Delete(runs);
+        give_mtx();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    cJSON *removed = cJSON_DetachItemFromArray(runs, remove_idx);
+    cJSON_Delete(removed);
+
+    esp_err_t err = persist_json_locked(PATH_RUNS, runs);
+    cJSON_Delete(runs);
+    give_mtx();
+    return err;
+}
+
+esp_err_t cybeer_storage_reset_all_data(void)
+{
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    esp_err_t err = write_full_locked(PATH_PARTICIPANTS, "[]");
+    if (err != ESP_OK) {
+        give_mtx();
+        return err;
+    }
+    err = write_full_locked(PATH_RUNS, "[]");
+    if (err != ESP_OK) {
+        give_mtx();
+        return err;
+    }
+    err = write_full_locked(PATH_TOURNAMENTS, "[]");
+    if (err != ESP_OK) {
+        give_mtx();
+        return err;
+    }
+    err = write_full_locked(PATH_ACTIVE_T, "{}");
+    give_mtx();
+    return err;
+}
+
 static esp_err_t resolve_participant_by_name_locked(const char *name, char pid_out[37])
 {
     cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);

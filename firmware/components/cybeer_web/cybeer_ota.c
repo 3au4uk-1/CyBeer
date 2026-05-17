@@ -16,7 +16,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "mbedtls/sha256.h"
 
 static const char *TAG = "cybeer_ota";
 
@@ -65,11 +64,6 @@ static bool find_multipart_end(const uint8_t *data, size_t len, const char *boun
 
 static bool admin_pin_ok(httpd_req_t *req)
 {
-    uint8_t stored[CYBEER_ADMIN_PIN_HASH_LEN];
-    if (cybeer_nvs_get_admin_pin_hash(stored) != ESP_OK) {
-        return false;
-    }
-
     char hdr[CYBEER_ADMIN_PIN_MAX_LEN + 8];
     if (httpd_req_get_hdr_value_str(req, "X-Admin-Pin", hdr, sizeof(hdr)) != ESP_OK) {
         return false;
@@ -86,15 +80,7 @@ static bool admin_pin_ok(httpd_req_t *req)
         return false;
     }
 
-    uint8_t digest[CYBEER_ADMIN_PIN_HASH_LEN];
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts(&ctx, 0);
-    mbedtls_sha256_update(&ctx, (const unsigned char *)hdr, n);
-    mbedtls_sha256_finish(&ctx, digest);
-    mbedtls_sha256_free(&ctx);
-
-    return memcmp(digest, stored, CYBEER_ADMIN_PIN_HASH_LEN) == 0;
+    return cybeer_admin_verify_pin(hdr) == ESP_OK;
 }
 
 static esp_err_t send_json_err(httpd_req_t *req, const char *status, const char *json)
