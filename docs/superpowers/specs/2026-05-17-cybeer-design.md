@@ -1,7 +1,7 @@
 # CyBeer — Design Specification
 
 **Date:** 2026-05-17  
-**Status:** Approved pending user review  
+**Status:** Approved  
 **Platform:** ESP32-C3 SuperMini, ESP-IDF 5.x
 
 ## 1. Purpose
