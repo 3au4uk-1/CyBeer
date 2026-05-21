@@ -22,6 +22,8 @@ static SemaphoreHandle_t s_mu;
 static int s_fds[CYBEER_WS_MAX_CLIENTS];
 static int64_t s_last_timer_send_us;
 static int s_last_battery_pct_sent = -1000;
+static int64_t s_last_ping_us;
+#define WS_PING_INTERVAL_US (15 * 1000000LL)
 static bool s_battery_listener_registered;
 
 static const char *fsm_state_str(cybeer_state_t s)
@@ -262,6 +264,7 @@ esp_err_t cybeer_ws_register(httpd_handle_t hd)
         s_fds[i] = -1;
     }
     s_last_timer_send_us = 0;
+    s_last_ping_us = 0;
     s_last_battery_pct_sent = -1000;
 
     if (!s_battery_listener_registered) {
@@ -311,6 +314,21 @@ void cybeer_ws_timer_tick(int64_t now_us)
     if (!s_hd) {
         return;
     }
+
+    if (s_hd && s_last_ping_us != 0 && (now_us - s_last_ping_us) >= WS_PING_INTERVAL_US) {
+        s_last_ping_us = now_us;
+        int fds[CYBEER_WS_MAX_CLIENTS];
+        int n = clients_copy(fds, CYBEER_WS_MAX_CLIENTS);
+        httpd_ws_frame_t ping = { .type = HTTPD_WS_TYPE_PING, .payload = NULL, .len = 0 };
+        for (int i = 0; i < n; i++) {
+            if (httpd_ws_send_frame_async(s_hd, fds[i], &ping) != ESP_OK) {
+                clients_remove(fds[i]);
+            }
+        }
+    } else if (s_last_ping_us == 0 && s_hd) {
+        s_last_ping_us = now_us;
+    }
+
     if (cybeer_fsm_snapshot().state != CYBEER_STATE_RUNNING) {
         s_last_timer_send_us = 0;
         return;
