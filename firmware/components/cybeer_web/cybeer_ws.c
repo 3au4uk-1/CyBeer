@@ -7,6 +7,7 @@
 #include "cybeer_timer.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -199,6 +200,36 @@ static esp_err_t h_ws(httpd_req_t *req)
     }
 
     if (clients_add(fd)) {
+        const cybeer_fsm_snapshot_t snap = cybeer_fsm_snapshot();
+
+        cJSON *state_msg = cJSON_CreateObject();
+        if (state_msg) {
+            cJSON_AddStringToObject(state_msg, "type", "state");
+            cJSON_AddStringToObject(state_msg, "state", fsm_state_str(snap.state));
+            char *printed = cJSON_PrintUnformatted(state_msg);
+            cJSON_Delete(state_msg);
+            if (printed) {
+                send_text_payload_to_fd(fd, printed, strlen(printed));
+                free(printed);
+            }
+        }
+
+        if (snap.state == CYBEER_STATE_RUNNING) {
+            const int64_t now_us = esp_timer_get_time();
+            const int64_t elapsed = cybeer_timer_elapsed_us(now_us);
+            cJSON *timer_msg = cJSON_CreateObject();
+            if (timer_msg) {
+                cJSON_AddStringToObject(timer_msg, "type", "timer");
+                cJSON_AddNumberToObject(timer_msg, "elapsedUs", (double)elapsed);
+                char *printed = cJSON_PrintUnformatted(timer_msg);
+                cJSON_Delete(timer_msg);
+                if (printed) {
+                    send_text_payload_to_fd(fd, printed, strlen(printed));
+                    free(printed);
+                }
+            }
+        }
+
         const int pct = cybeer_battery_get_percent();
         cJSON *root = cJSON_CreateObject();
         if (root) {
