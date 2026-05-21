@@ -6,6 +6,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "cybeer_led.h"
 #include "cybeer_setup_html.h"
 #include "cybeer_storage.h"
 
@@ -603,6 +604,7 @@ esp_err_t cybeer_wifi_start(void)
         ESP_LOGI(TAG, "STA joining: %s", sta_ssid);
     } else {
         ESP_LOGI(TAG, "Provisioning mode (no STA credentials)");
+        cybeer_led_set_fx(CYBEER_LED_FX_WIFI_SETUP);
     }
 
     if (!have_sta) {
