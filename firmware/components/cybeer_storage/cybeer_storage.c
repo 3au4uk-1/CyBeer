@@ -708,6 +708,14 @@ bool cybeer_storage_run_qualifies_podium_led(const cybeer_run_t *run)
     return (n_faster_global < 3) || (n_faster_same == 0);
 }
 
+/**
+ * Returns pointer to internal static buffer containing runs.json content.
+ *
+ * THREAD SAFETY: The returned pointer is valid only until the next call to
+ * any cybeer_storage_*_json() function. Safe when httpd uses its default
+ * single-threaded request handling (one handler runs at a time).
+ * Do NOT call from multiple tasks concurrently.
+ */
 const char *cybeer_storage_runs_json(void)
 {
     if (take_mtx() != ESP_OK) {
@@ -721,6 +729,14 @@ const char *cybeer_storage_runs_json(void)
     return s_runs_json_buf;
 }
 
+/**
+ * Returns pointer to internal static buffer containing participants.json content.
+ *
+ * THREAD SAFETY: The returned pointer is valid only until the next call to
+ * any cybeer_storage_*_json() function. Safe when httpd uses its default
+ * single-threaded request handling (one handler runs at a time).
+ * Do NOT call from multiple tasks concurrently.
+ */
 const char *cybeer_storage_participants_json(void)
 {
     if (take_mtx() != ESP_OK) {
@@ -735,6 +751,14 @@ const char *cybeer_storage_participants_json(void)
     return s_participants_json_buf;
 }
 
+/**
+ * Returns pointer to internal static buffer containing tournaments.json content.
+ *
+ * THREAD SAFETY: The returned pointer is valid only until the next call to
+ * any cybeer_storage_*_json() function. Safe when httpd uses its default
+ * single-threaded request handling (one handler runs at a time).
+ * Do NOT call from multiple tasks concurrently.
+ */
 const char *cybeer_storage_tournaments_json(void)
 {
     if (take_mtx() != ESP_OK) {
@@ -749,6 +773,14 @@ const char *cybeer_storage_tournaments_json(void)
     return s_tournaments_json_buf;
 }
 
+/**
+ * Returns pointer to internal static buffer containing active tournament JSON.
+ *
+ * THREAD SAFETY: The returned pointer is valid only until the next call to
+ * any cybeer_storage_*_json() function. Safe when httpd uses its default
+ * single-threaded request handling (one handler runs at a time).
+ * Do NOT call from multiple tasks concurrently.
+ */
 const char *cybeer_storage_active_tournament_json(void)
 {
     if (take_mtx() != ESP_OK) {
