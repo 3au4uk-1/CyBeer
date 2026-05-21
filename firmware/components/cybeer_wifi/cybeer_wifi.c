@@ -12,6 +12,7 @@
 #include "cJSON.h"
 #include "esp_check.h"
 #include "esp_event.h"
+#include "esp_sntp.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -42,6 +43,7 @@ static bool s_init_done;
 static bool s_wifi_started;
 static bool s_sta_has_ip;
 static bool s_mdns_started;
+static bool s_sntp_started;
 static char s_sta_ip_str[16];
 static int s_sta_retry_count;
 static esp_timer_handle_t s_sta_reconnect_timer;
@@ -192,6 +194,15 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             (void)mdns_instance_name_set("CyBeer");
             s_mdns_started = true;
         }
+    }
+
+    if (!s_sntp_started) {
+        esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_setservername(1, "time.google.com");
+        esp_sntp_init();
+        s_sntp_started = true;
+        ESP_LOGI(TAG, "SNTP started");
     }
 }
 
