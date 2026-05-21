@@ -1,6 +1,7 @@
 #include "cybeer_web.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cybeer_ota.h"
@@ -934,6 +935,136 @@ static esp_err_t h_static(httpd_req_t *req)
     return ESP_OK;
 }
 
+static int compare_runs_by_duration(const void *a, const void *b)
+{
+    const cybeer_run_t *ra = (const cybeer_run_t *)a;
+    const cybeer_run_t *rb = (const cybeer_run_t *)b;
+    if (ra->duration_us < rb->duration_us) {
+        return -1;
+    }
+    if (ra->duration_us > rb->duration_us) {
+        return 1;
+    }
+    return 0;
+}
+
+static esp_err_t h_get_leaderboard(httpd_req_t *req)
+{
+    int limit = 20;
+    char query[64];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+        char val[8];
+        if (httpd_query_key_value(query, "limit", val, sizeof(val)) == ESP_OK) {
+            int v = atoi(val);
+            if (v > 0 && v <= 50) {
+                limit = v;
+            }
+        }
+    }
+
+    const char *raw_runs = cybeer_storage_runs_json();
+    cJSON *arr = cJSON_Parse(raw_runs && raw_runs[0] ? raw_runs : "[]");
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) {
+            cJSON_Delete(arr);
+        }
+        cJSON *empty = cJSON_CreateArray();
+        return json_send(req, empty);
+    }
+
+    int n = cJSON_GetArraySize(arr);
+    cybeer_run_t *claimed = (cybeer_run_t *)malloc((size_t)n * sizeof(cybeer_run_t));
+    if (!claimed) {
+        cJSON_Delete(arr);
+        cJSON *empty = cJSON_CreateArray();
+        return json_send(req, empty);
+    }
+
+    int nc = 0;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, arr)
+    {
+        cybeer_run_t r;
+        memset(&r, 0, sizeof(r));
+        const cJSON *jcl = cJSON_GetObjectItemCaseSensitive(item, "claimed");
+        if (!cJSON_IsTrue(jcl)) {
+            continue;
+        }
+        const cJSON *jid = cJSON_GetObjectItemCaseSensitive(item, "id");
+        const cJSON *jpid = cJSON_GetObjectItemCaseSensitive(item, "participant_id");
+        const cJSON *jdur = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
+        const cJSON *jfa = cJSON_GetObjectItemCaseSensitive(item, "finished_at");
+        if (cJSON_IsString(jid) && jid->valuestring) {
+            strncpy(r.id, jid->valuestring, sizeof(r.id) - 1);
+        }
+        if (cJSON_IsString(jpid) && jpid->valuestring) {
+            strncpy(r.participant_id, jpid->valuestring, sizeof(r.participant_id) - 1);
+        }
+        if (cJSON_IsNumber(jdur)) {
+            r.duration_us = (int64_t)jdur->valuedouble;
+        }
+        if (cJSON_IsString(jfa) && jfa->valuestring) {
+            strncpy(r.finished_at, jfa->valuestring, sizeof(r.finished_at) - 1);
+        }
+        r.claimed = true;
+        claimed[nc++] = r;
+    }
+    cJSON_Delete(arr);
+
+    if (nc > 1) {
+        qsort(claimed, (size_t)nc, sizeof(cybeer_run_t), compare_runs_by_duration);
+    }
+
+    const char *raw_parts = cybeer_storage_participants_json();
+    cJSON *parts = cJSON_Parse(raw_parts && raw_parts[0] ? raw_parts : "[]");
+
+    cJSON *out = cJSON_CreateArray();
+    if (!out) {
+        free(claimed);
+        if (parts) {
+            cJSON_Delete(parts);
+        }
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+
+    int cnt = nc < limit ? nc : limit;
+    for (int i = 0; i < cnt; i++) {
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry) {
+            continue;
+        }
+        cJSON_AddNumberToObject(entry, "rank", (double)(i + 1));
+        cJSON_AddStringToObject(entry, "participantId", claimed[i].participant_id);
+
+        const char *pname = "";
+        if (parts && cJSON_IsArray(parts)) {
+            cJSON *p = NULL;
+            cJSON_ArrayForEach(p, parts)
+            {
+                const cJSON *pid = cJSON_GetObjectItemCaseSensitive(p, "id");
+                if (cJSON_IsString(pid) && pid->valuestring
+                    && strcmp(pid->valuestring, claimed[i].participant_id) == 0) {
+                    const cJSON *pn = cJSON_GetObjectItemCaseSensitive(p, "name");
+                    if (cJSON_IsString(pn) && pn->valuestring) {
+                        pname = pn->valuestring;
+                    }
+                    break;
+                }
+            }
+        }
+        cJSON_AddStringToObject(entry, "participantName", pname);
+        cJSON_AddNumberToObject(entry, "durationUs", (double)claimed[i].duration_us);
+        cJSON_AddStringToObject(entry, "finishedAt", claimed[i].finished_at);
+        cJSON_AddItemToArray(out, entry);
+    }
+
+    free(claimed);
+    if (parts) {
+        cJSON_Delete(parts);
+    }
+    return json_send(req, out);
+}
+
 esp_err_t cybeer_web_start(void)
 {
     if (s_server) {
@@ -956,6 +1087,9 @@ esp_err_t cybeer_web_start(void)
     httpd_uri_t u_runs = { .uri = "/api/runs", .method = HTTP_GET, .handler = h_get_runs, .user_ctx = NULL };
     httpd_uri_t u_parts = {
         .uri = "/api/participants", .method = HTTP_GET, .handler = h_get_participants, .user_ctx = NULL
+    };
+    httpd_uri_t u_leaderboard = {
+        .uri = "/api/leaderboard", .method = HTTP_GET, .handler = h_get_leaderboard, .user_ctx = NULL
     };
     httpd_uri_t u_part_stats = {
         .uri = "/api/participants/*/stats",
@@ -1014,6 +1148,7 @@ esp_err_t cybeer_web_start(void)
 
     if (httpd_register_uri_handler(s_server, &u_status) != ESP_OK || httpd_register_uri_handler(s_server, &u_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_leaderboard) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_stats) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_active_pub) != ESP_OK
