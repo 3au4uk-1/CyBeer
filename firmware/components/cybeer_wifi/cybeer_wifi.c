@@ -15,6 +15,7 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -27,6 +28,8 @@
 static const char *TAG = "cybeer_wifi";
 
 #define CYBEER_AP_IP_ADDR PP_HTONL(LWIP_MAKEU32(192, 168, 4, 1))
+#define STA_RECONNECT_BASE_MS 2000
+#define STA_RECONNECT_MAX_DELAY_MS 30000
 
 /** DHCP offer flag: include DNS server option (matches ESP-IDF softap_sta example). */
 static const uint8_t k_dhcps_offer_dns = 0x02;
@@ -40,11 +43,50 @@ static bool s_wifi_started;
 static bool s_sta_has_ip;
 static bool s_mdns_started;
 static char s_sta_ip_str[16];
+static int s_sta_retry_count;
+static esp_timer_handle_t s_sta_reconnect_timer;
 
 static esp_event_handler_instance_t s_wifi_inst;
 static esp_event_handler_instance_t s_ip_inst;
 
 static void dns_server_task(void *arg);
+
+static void sta_reconnect_timer_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "STA reconnect (retry count %d)", s_sta_retry_count);
+    (void)esp_wifi_connect();
+}
+
+static void schedule_sta_reconnect(void)
+{
+    uint32_t delay_ms = STA_RECONNECT_BASE_MS << s_sta_retry_count;
+    if (delay_ms > STA_RECONNECT_MAX_DELAY_MS) {
+        delay_ms = STA_RECONNECT_MAX_DELAY_MS;
+    }
+    s_sta_retry_count++;
+
+    if (s_sta_reconnect_timer == NULL) {
+        const esp_timer_create_args_t args = {
+            .callback = &sta_reconnect_timer_cb,
+            .name = "sta_reconn",
+        };
+        if (esp_timer_create(&args, &s_sta_reconnect_timer) != ESP_OK) {
+            ESP_LOGE(TAG, "STA reconnect timer create failed");
+            (void)esp_wifi_connect();
+            return;
+        }
+    }
+
+    (void)esp_timer_stop(s_sta_reconnect_timer);
+    esp_err_t err = esp_timer_start_once(s_sta_reconnect_timer, (uint64_t)delay_ms * 1000ULL);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "STA reconnect timer start failed: %s", esp_err_to_name(err));
+        (void)esp_wifi_connect();
+        return;
+    }
+    ESP_LOGI(TAG, "STA reconnect scheduled in %lu ms", (unsigned long)delay_ms);
+}
 
 static bool host_is_ap_portal(const char *host)
 {
@@ -114,6 +156,9 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
         s_sta_has_ip = false;
         s_sta_ip_str[0] = '\0';
+        if (s_sta_netif != NULL) {
+            schedule_sta_reconnect();
+        }
     }
 }
 
@@ -127,6 +172,10 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 
     ip_event_got_ip_t *ev = (ip_event_got_ip_t *)data;
+    s_sta_retry_count = 0;
+    if (s_sta_reconnect_timer != NULL) {
+        (void)esp_timer_stop(s_sta_reconnect_timer);
+    }
     s_sta_has_ip = true;
     snprintf(s_sta_ip_str, sizeof(s_sta_ip_str), IPSTR, IP2STR(&ev->ip_info.ip));
     ESP_LOGI(TAG, "STA got IP: %s", s_sta_ip_str);
