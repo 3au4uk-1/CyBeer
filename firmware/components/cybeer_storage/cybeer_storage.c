@@ -499,6 +499,35 @@ static esp_err_t resolve_participant_by_name_locked(const char *name, char pid_o
     return ESP_ERR_NOT_FOUND;
 }
 
+static esp_err_t create_participant_by_name_locked(const char *name, char pid_out[37])
+{
+    cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
+    if (!parts) {
+        parts = cJSON_CreateArray();
+        if (!parts) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    cybeer_format_uuid_v4(pid_out);
+
+    cJSON *p = cJSON_CreateObject();
+    if (!p) {
+        cJSON_Delete(parts);
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON_AddStringToObject(p, "id", pid_out);
+    cJSON_AddStringToObject(p, "name", name);
+    char ts[32];
+    cybeer_storage_iso8601_now(ts);
+    cJSON_AddStringToObject(p, "createdAt", ts);
+    cJSON_AddItemToArray(parts, p);
+
+    esp_err_t err = persist_json_locked(PATH_PARTICIPANTS, parts);
+    cJSON_Delete(parts);
+    return err;
+}
+
 esp_err_t cybeer_storage_claim_run(const char *run_id, const char *name_or_pid, bool by_participant_id)
 {
     ESP_RETURN_ON_FALSE(run_id && name_or_pid, ESP_ERR_INVALID_ARG, TAG, "args");
@@ -513,6 +542,9 @@ esp_err_t cybeer_storage_claim_run(const char *run_id, const char *name_or_pid, 
         lookup = resolve_participant_by_name_locked(name_or_pid, pid);
     }
 
+    if (lookup == ESP_ERR_NOT_FOUND) {
+        lookup = create_participant_by_name_locked(name_or_pid, pid);
+    }
     if (lookup != ESP_OK) {
         give_mtx();
         return lookup;
