@@ -6,6 +6,9 @@
 
 #include "esp_err.h"
 
+struct cJSON;
+typedef struct cJSON cJSON;
+
 #define CYBEER_WIFI_SSID_MAX 33
 #define CYBEER_WIFI_PASS_MAX 65
 #define CYBEER_ADMIN_PIN_HASH_LEN 32
