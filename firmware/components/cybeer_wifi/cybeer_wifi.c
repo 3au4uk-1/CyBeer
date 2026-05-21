@@ -2,9 +2,11 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
+#include "cybeer_setup_html.h"
 #include "cybeer_storage.h"
 
 #include "cJSON.h"
@@ -146,8 +148,93 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 
 static esp_err_t h_get_setup(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_send(req, "CyBeer Wi-Fi provisioning\n", HTTPD_RESP_USE_STRLEN);
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    return httpd_resp_send(req, CYBEER_SETUP_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+static const char *auth_mode_str(wifi_auth_mode_t mode)
+{
+    switch (mode) {
+    case WIFI_AUTH_OPEN:
+        return "Open";
+    case WIFI_AUTH_WEP:
+        return "WEP";
+    case WIFI_AUTH_WPA_PSK:
+        return "WPA";
+    case WIFI_AUTH_WPA2_PSK:
+        return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+        return "WPA/WPA2";
+    case WIFI_AUTH_WPA3_PSK:
+        return "WPA3";
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+        return "WPA2/WPA3";
+    default:
+        return "Other";
+    }
+}
+
+static esp_err_t h_get_scan(httpd_req_t *req)
+{
+    wifi_scan_config_t scan_cfg = {
+        .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_PASSIVE,
+        .scan_time.passive = 300,
+    };
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+    }
+
+    uint16_t ap_count = 0;
+    esp_wifi_scan_get_ap_num(&ap_count);
+    if (ap_count > 20) {
+        ap_count = 20;
+    }
+
+    wifi_ap_record_t *ap_list = NULL;
+    if (ap_count > 0) {
+        ap_list = (wifi_ap_record_t *)malloc(ap_count * sizeof(wifi_ap_record_t));
+        if (!ap_list) {
+            esp_wifi_scan_get_ap_records(&ap_count, NULL);
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+        }
+        esp_wifi_scan_get_ap_records(&ap_count, ap_list);
+    }
+
+    cJSON *arr = cJSON_CreateArray();
+    if (!arr) {
+        free(ap_list);
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+    }
+
+    for (uint16_t i = 0; i < ap_count; i++) {
+        cJSON *item = cJSON_CreateObject();
+        if (!item) {
+            continue;
+        }
+        cJSON_AddStringToObject(item, "ssid", (const char *)ap_list[i].ssid);
+        cJSON_AddNumberToObject(item, "rssi", (double)ap_list[i].rssi);
+        cJSON_AddStringToObject(item, "auth", auth_mode_str(ap_list[i].authmode));
+        cJSON_AddItemToArray(arr, item);
+    }
+    free(ap_list);
+
+    char *printed = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+    if (!printed) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_send(req, printed, HTTPD_RESP_USE_STRLEN);
+    free(printed);
+    return e;
 }
 
 static esp_err_t h_post_setup_wifi(httpd_req_t *req)
@@ -248,12 +335,16 @@ static esp_err_t bind_setup_handlers(httpd_handle_t h)
     httpd_uri_t u_api_wifi = {
         .uri = "/api/setup/wifi", .method = HTTP_POST, .handler = h_post_setup_wifi, .user_ctx = NULL
     };
+    httpd_uri_t u_scan = {
+        .uri = "/api/setup/scan", .method = HTTP_GET, .handler = h_get_scan, .user_ctx = NULL
+    };
     httpd_uri_t u_forget = {
         .uri = "/api/admin/wifi/forget", .method = HTTP_POST, .handler = h_post_forget, .user_ctx = NULL
     };
 
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(h, &u_setup), TAG, "uri /setup");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(h, &u_api_wifi), TAG, "uri /api/setup/wifi");
+    ESP_RETURN_ON_ERROR(httpd_register_uri_handler(h, &u_scan), TAG, "uri /api/setup/scan");
     ESP_RETURN_ON_ERROR(httpd_register_uri_handler(h, &u_forget), TAG, "uri forget");
     ESP_RETURN_ON_ERROR(httpd_register_err_handler(h, HTTPD_404_NOT_FOUND, h_err_404), TAG, "err 404");
     return ESP_OK;
