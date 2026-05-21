@@ -665,13 +665,15 @@ static esp_err_t h_put_settings(httpd_req_t *req)
     }
     const cJSON *jlc = cJSON_GetObjectItemCaseSensitive(root, "ledCount");
     const cJSON *jbr = cJSON_GetObjectItemCaseSensitive(root, "brightness");
-    cJSON_Delete(root);
 
     if (!cJSON_IsNumber(jlc) || !cJSON_IsNumber(jbr)) {
+        cJSON_Delete(root);
         return send_json_text(req, "400 Bad Request", "{\"error\":\"ledCount and brightness numbers\"}");
     }
     int led = (int)jlc->valuedouble;
     int br = (int)jbr->valuedouble;
+    cJSON_Delete(root);
+
     if (led < 1 || led > CYBEER_LED_COUNT_MAX || br < 1 || br > 255) {
         return send_json_text(req, "400 Bad Request", "{\"error\":\"out of range\"}");
     }
