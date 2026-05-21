@@ -156,7 +156,33 @@
   function initClaimForm() {
     const form = document.getElementById("claimForm");
     const msg = document.getElementById("claimMsg");
+    const sel = document.getElementById("claimSelect");
+    const nameInput = document.getElementById("claimName");
     if (!form) return;
+
+    fetch("/api/participants")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!Array.isArray(data)) return;
+        for (const p of data) {
+          if (!p || !p.id || !p.name) continue;
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.name;
+          sel.appendChild(opt);
+        }
+      })
+      .catch(() => {});
+
+    sel.addEventListener("change", () => {
+      if (sel.value) {
+        nameInput.value = "";
+        nameInput.disabled = true;
+      } else {
+        nameInput.disabled = false;
+      }
+    });
+
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       if (msg) {
@@ -173,15 +199,31 @@
         }
         return;
       }
-      const name = document.getElementById("claimName")?.value?.trim();
-      const pid = document.getElementById("claimPid")?.value?.trim();
-      const body = pid ? { participantId: pid } : { name: name || "" };
+
+      let body;
+      if (sel.value) {
+        body = { participantId: sel.value };
+      } else {
+        const name = nameInput?.value?.trim();
+        if (!name) {
+          if (msg) {
+            msg.textContent = "Выберите участника или введите имя.";
+            msg.classList.add("err");
+          }
+          return;
+        }
+        body = { name: name };
+      }
+
       try {
-        const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/claim`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+        const resp = await fetch(
+          `/api/runs/${encodeURIComponent(runId)}/claim`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
         const txt = await resp.text();
         if (!resp.ok) {
           if (msg) {
@@ -190,7 +232,7 @@
           }
           return;
         }
-        if (msg) msg.textContent = "Claimed.";
+        if (msg) msg.textContent = "Claimed!";
         await tickClaimTarget();
       } catch (e) {
         if (msg) {

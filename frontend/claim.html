@@ -1,45 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Claim run — CyBeer</title>
-  <link rel="stylesheet" href="/app.css" />
+  <title>CyBeer — Claim</title>
+  <link rel="stylesheet" href="app.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">🍺</span>
-      <h1>CyBeer</h1>
-    </div>
-    <nav>
-      <a href="/">Leaderboard</a>
-    </nav>
-  </header>
-
-  <main>
-    <section class="panel claim-panel">
-      <h2>Claim latest run</h2>
-      <p class="hint">Posts to <code>/api/runs/&lt;id&gt;/claim</code> with your display name (must match a participant name in storage).</p>
-      <p>Target run id: <strong id="targetRunId">loading…</strong></p>
-      <form id="claimForm">
-        <label>
-          Name
-          <input type="text" name="name" id="claimName" required autocomplete="name" placeholder="Vasya" />
-        </label>
-        <label>
-          Or participant UUID
-          <input type="text" name="participantId" id="claimPid" placeholder="optional" />
-        </label>
-        <button type="submit">Claim</button>
-      </form>
-      <p id="claimMsg" class="msg" aria-live="polite"></p>
-    </section>
+  <main class="container">
+    <h1>Claim Run</h1>
+    <p>Unclaimed run: <strong id="targetRunId">(loading...)</strong></p>
+    <form id="claimForm">
+      <label for="claimSelect">Выбрать участника:</label>
+      <select id="claimSelect">
+        <option value="">— Новый участник —</option>
+      </select>
+      <label for="claimName">Или введите новое имя:</label>
+      <input type="text" id="claimName" placeholder="Имя нового участника" />
+      <button type="submit">Claim</button>
+    </form>
+    <p id="claimMsg"></p>
+    <p><a href="/">← Back</a></p>
   </main>
-
-  <script src="/app.js"></script>
-  <script>
-    window.__CYBEER_PAGE__ = "claim";
-  </script>
+  <script>window.__CYBEER_PAGE__ = "claim";</script>
+  <script src="app.js"></script>
 </body>
 </html>
