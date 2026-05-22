@@ -422,3 +422,8 @@ void cybeer_ws_on_run_finished(const char *run_id, int64_t duration_us)
     broadcast_text(printed, strlen(printed));
     free(printed);
 }
+
+void cybeer_ws_broadcast_text(const char *text, size_t len)
+{
+    broadcast_text(text, len);
+}
