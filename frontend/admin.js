@@ -85,10 +85,27 @@ function scanWifi() {
   showMsg("");
 
   fetch("/api/setup/scan")
-    .then(function (r) { return r.json(); })
-    .then(function (list) {
+    .then(function (r) {
+      return r.json().then(function (data) {
+        return { ok: r.ok, data: data };
+      });
+    })
+    .then(function (res) {
+      var data = res.data;
       sel.innerHTML = "";
-      if (!Array.isArray(list) || list.length === 0) {
+      if (!res.ok && data && data.error) {
+        showMsg("Сканирование не удалось: " + data.error, true);
+        sel.innerHTML = '<option value="">(ошибка сканирования)</option>';
+        sel.disabled = true;
+        connectBtn.disabled = true;
+        return;
+      }
+      var list = Array.isArray(data) ? data : [];
+      if (list.length === 0) {
+        showMsg(
+          "Сети не найдены. Если устройство в режиме точки доступа — подождите и повторите.",
+          true
+        );
         sel.innerHTML = '<option value="">(сети не найдены)</option>';
         sel.disabled = true;
         connectBtn.disabled = true;
@@ -449,3 +466,105 @@ probeAdminPin().then(function (ok) {
 fetchStatus().catch(function (e) {
   showMsg("Не удалось связаться с устройством: " + (e.message || e), true);
 });
+
+/* --- OTA Update --- */
+
+async function otaCheck() {
+  try {
+    const res = await fetch("/api/admin/ota/check", { headers: pinHeaders() });
+    if (!res.ok) throw new Error("status " + res.status);
+    const data = await res.json();
+
+    document.getElementById("otaCurrentVer").textContent = "Версия: " + data.currentVersion;
+
+    if (data.available) {
+      document.getElementById("otaAvailable").style.display = "";
+      document.getElementById("otaUpToDate").style.display = "none";
+      document.getElementById("otaNewVer").textContent = "Доступна v" + data.remoteVersion;
+      document.getElementById("otaChangelog").textContent = data.changelog || "";
+    } else {
+      document.getElementById("otaAvailable").style.display = "none";
+      document.getElementById("otaUpToDate").style.display = "";
+    }
+  } catch (e) {
+    document.getElementById("otaCurrentVer").textContent = "Не удалось проверить обновления";
+  }
+}
+
+function otaShowProgress() {
+  document.getElementById("otaProgress").style.display = "";
+  document.getElementById("otaAvailable").style.display = "none";
+  document.getElementById("otaUpToDate").style.display = "none";
+  document.getElementById("otaError").style.display = "none";
+  document.querySelectorAll("#adminPanel details:not(#otaSection) button, #adminPanel details:not(#otaSection) input, #adminPanel details:not(#otaSection) select").forEach(el => el.disabled = true);
+}
+
+function otaShowError(msg) {
+  document.getElementById("otaProgress").style.display = "none";
+  document.getElementById("otaError").style.display = "";
+  document.getElementById("otaErrMsg").textContent = msg;
+  document.querySelectorAll("#adminPanel button, #adminPanel input, #adminPanel select").forEach(el => el.disabled = false);
+}
+
+async function otaStart() {
+  otaShowProgress();
+  try {
+    const res = await fetch("/api/admin/ota/start", {
+      method: "POST",
+      headers: pinHeaders(),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || "Ошибка запуска");
+    }
+  } catch (e) {
+    otaShowError(e.message);
+  }
+}
+
+async function otaUpload() {
+  const fileInput = document.getElementById("otaFileInput");
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  otaShowProgress();
+  try {
+    const res = await fetch("/api/admin/ota/upload", {
+      method: "POST",
+      headers: { "X-Admin-Pin": getAdminPin(), "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || "Ошибка загрузки");
+    }
+  } catch (e) {
+    otaShowError(e.message);
+  }
+}
+
+function otaHandleWsMessage(data) {
+  if (data.type === "ota_progress") {
+    document.getElementById("otaBar").value = data.percent;
+    const stageNames = { downloading: "Скачивание...", receiving: "Получение...", firmware: "Запись прошивки...", littlefs: "Запись интерфейса..." };
+    document.getElementById("otaStage").textContent = stageNames[data.stage] || data.stage;
+  } else if (data.type === "ota_done") {
+    document.getElementById("otaStage").textContent = "Обновлено! Перезагрузка...";
+    document.getElementById("otaBar").value = 100;
+    setTimeout(() => location.reload(), 7000);
+  } else if (data.type === "ota_error") {
+    otaShowError(data.message);
+  }
+}
+
+(function initOta() {
+  document.getElementById("otaStartBtn")?.addEventListener("click", otaStart);
+  document.getElementById("otaUploadBtn")?.addEventListener("click", otaUpload);
+  document.getElementById("otaRetryBtn")?.addEventListener("click", otaCheck);
+  document.getElementById("otaCheckBtn")?.addEventListener("click", otaCheck);
+  document.getElementById("otaFileInput")?.addEventListener("change", function () {
+    document.getElementById("otaUploadBtn").disabled = !this.files.length;
+  });
+
+  otaCheck();
+})();

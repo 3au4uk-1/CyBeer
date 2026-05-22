@@ -147,6 +147,33 @@
           <button type="submit">Привязать следующий заезд</button>
         </form>
       </details>
+
+      <details id="otaSection">
+        <summary>Обновление прошивки</summary>
+        <div id="otaCurrentVer"></div>
+        <div id="otaAvailable" style="display:none">
+          <p><strong id="otaNewVer"></strong></p>
+          <p class="hint" id="otaChangelog"></p>
+          <button type="button" id="otaStartBtn" class="btn-primary">Обновить</button>
+        </div>
+        <div id="otaUpToDate" style="display:none">
+          <p style="color:var(--green)">Актуальная версия</p>
+        </div>
+        <div id="otaProgress" style="display:none">
+          <progress id="otaBar" max="100" value="0" style="width:100%"></progress>
+          <p id="otaStage"></p>
+          <p class="hint" style="color:var(--amber)">Не закрывайте страницу!</p>
+        </div>
+        <div id="otaError" style="display:none">
+          <p class="err" id="otaErrMsg"></p>
+          <button type="button" id="otaRetryBtn">Повторить</button>
+        </div>
+        <hr />
+        <p class="hint">Или загрузите файл вручную:</p>
+        <input type="file" id="otaFileInput" accept=".cyb" />
+        <button type="button" id="otaUploadBtn" disabled>Загрузить</button>
+        <button type="button" id="otaCheckBtn" class="btn-scan">Проверить обновления</button>
+      </details>
     </section>
   </main>
 

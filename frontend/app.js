@@ -275,6 +275,10 @@
       } catch (_) {
         return;
       }
+      if (typeof otaHandleWsMessage === "function" && (msg.type === "ota_progress" || msg.type === "ota_done" || msg.type === "ota_error")) {
+        otaHandleWsMessage(msg);
+        return;
+      }
       if (!msg || typeof msg.type !== "string") return;
 
       if (msg.type === "timer" && typeof msg.elapsedUs === "number") {
