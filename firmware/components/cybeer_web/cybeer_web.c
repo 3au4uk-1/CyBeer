@@ -19,6 +19,7 @@
 #include "cJSON.h"
 #include "esp_check.h"
 #include "esp_http_server.h"
+#include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -92,6 +93,15 @@ static esp_err_t h_get_status(httpd_req_t *req)
     cJSON_AddBoolToObject(wifi, "sta", cybeer_wifi_sta_connected());
     cJSON_AddBoolToObject(wifi, "ap", cybeer_wifi_is_started());
     cJSON_AddStringToObject(wifi, "staIp", sta_ip);
+    wifi_ap_record_t ap_info;
+    if (cybeer_wifi_sta_connected() && esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        cJSON_AddStringToObject(wifi, "ssid", (const char *)ap_info.ssid);
+        cJSON_AddNumberToObject(wifi, "rssi", (double)ap_info.rssi);
+    } else {
+        cJSON_AddStringToObject(wifi, "ssid", "");
+        cJSON_AddNumberToObject(wifi, "rssi", 0);
+    }
+    cJSON_AddBoolToObject(wifi, "apFallback", cybeer_wifi_ap_is_fallback());
     cJSON_AddItemToObject(root, "wifi", wifi);
     cJSON_AddNumberToObject(root, "ledCount", (double)led_count);
     cJSON_AddNumberToObject(root, "ledBrightness", (double)led_bright);
