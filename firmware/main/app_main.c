@@ -28,6 +28,9 @@ static QueueHandle_t s_run_save_q;
 /** Persist run + WS/LED side effects off the display/FSM task (LittleFS writes block Wi-Fi). */
 static void persist_finished_run(int64_t duration_us)
 {
+    /* Let LED flash / state WS drain before flash write + runFinished burst. */
+    vTaskDelay(pdMS_TO_TICKS(120));
+
     cybeer_run_t run = { 0 };
     cybeer_format_uuid_v4(run.id);
     run.participant_id[0] = '\0';
@@ -75,11 +78,21 @@ static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
     }
 }
 
+static bool display_update_due(int64_t now_us, int64_t *last_us, int64_t period_us)
+{
+    if (*last_us == 0 || (now_us - *last_us) >= period_us) {
+        *last_us = now_us;
+        return true;
+    }
+    return false;
+}
+
 static void display_task(void *pvParameters)
 {
     (void)pvParameters;
 
     cybeer_state_t fsm_prev = CYBEER_STATE_PREP;
+    int64_t last_display_us = 0;
 
     for (;;) {
         const int64_t now = esp_timer_get_time();
@@ -92,20 +105,31 @@ static void display_task(void *pvParameters)
 
         cybeer_fsm_snapshot_t snap = cybeer_fsm_snapshot();
         if (snap.state != fsm_prev) {
-            cybeer_ws_broadcast_state();
+            if (snap.state == CYBEER_STATE_FINISHED || fsm_prev == CYBEER_STATE_RUNNING
+                || snap.state == CYBEER_STATE_RUNNING) {
+                cybeer_ws_broadcast_state_deferred(80000);
+            } else {
+                cybeer_ws_broadcast_state();
+            }
+            last_display_us = 0;
+            if (snap.state == CYBEER_STATE_PREP) {
+                cybeer_display_show_zeros();
+                last_display_us = now;
+            }
         }
         cybeer_ws_timer_tick(now);
 
         switch (snap.state) {
         case CYBEER_STATE_RUNNING:
-            cybeer_display_show_us(cybeer_timer_elapsed_us(now));
-            break;
-        case CYBEER_STATE_PREP:
-            cybeer_display_show_zeros();
+            if (display_update_due(now, &last_display_us, 100000)) {
+                cybeer_display_show_us(cybeer_timer_elapsed_us(now));
+            }
             break;
         case CYBEER_STATE_READY:
         case CYBEER_STATE_FINISHED:
-            cybeer_display_show_us(snap.finished_duration_us);
+            if (display_update_due(now, &last_display_us, 250000)) {
+                cybeer_display_show_us(snap.finished_duration_us);
+            }
             break;
         default:
             break;
@@ -137,7 +161,8 @@ static void display_task(void *pvParameters)
 
         cybeer_led_task_tick(now);
 
-        vTaskDelay(pdMS_TO_TICKS(20));
+        const uint32_t loop_ms = (snap.state == CYBEER_STATE_RUNNING) ? 33 : 25;
+        vTaskDelay(pdMS_TO_TICKS(loop_ms));
     }
 }
 

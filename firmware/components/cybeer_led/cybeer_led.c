@@ -8,8 +8,12 @@
 #include "led_strip.h"
 #include "led_strip_rmt.h"
 #include "led_strip_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "cybeer_led";
+/** Delay FINISHED flash so Wi-Fi/httpd can finish work after switch transition. */
+#define FINISHED_FLASH_DELAY_US 150000
 #define CYBEER_LED_FINISHED_FLASH_US    180000
 #define CYBEER_LED_FINISHED_DIM_HOLD_US 700000
 static led_strip_handle_t s_strip;
@@ -20,6 +24,8 @@ static cybeer_led_fx_t s_fx_requested = CYBEER_LED_FX_AMBIENT;
 static int64_t s_finished_enter_us;
 static int64_t s_podium_until_us;
 static bool s_has_unclaimed_run;
+static cybeer_led_fx_t s_delayed_fx;
+static int64_t s_delayed_fx_at_us;
 static void load_led_settings(void)
 {
     uint8_t c = CYBEER_LED_COUNT_DEFAULT;
@@ -79,7 +85,9 @@ static esp_err_t draw_all(uint32_t r, uint32_t g, uint32_t b)
             return e;
         }
     }
-    return led_strip_refresh(s_strip);
+    e = led_strip_refresh(s_strip);
+    taskYIELD();
+    return e;
 }
 static esp_err_t render_ambient(int64_t now_us)
 {
@@ -110,7 +118,15 @@ static esp_err_t render_frame(int64_t now_us)
     if (rq == CYBEER_LED_FX_FINISHED) {
         const int64_t dt = now_us - s_finished_enter_us;
         if (dt < (int64_t)CYBEER_LED_FINISHED_FLASH_US) {
-            return draw_all(255, 255, 240);
+            uint32_t r;
+            uint32_t g;
+            uint32_t b;
+            uint32_t br = (uint32_t)s_led_brightness_base + 48;
+            if (br > 200) {
+                br = 200;
+            }
+            rgb_scale(br, 255, 255, 240, &r, &g, &b);
+            return draw_all(r, g, b);
         }
         const int64_t dim_until =
             (int64_t)CYBEER_LED_FINISHED_FLASH_US + (int64_t)CYBEER_LED_FINISHED_DIM_HOLD_US;
@@ -214,7 +230,7 @@ void cybeer_led_init(void)
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip));
     ESP_LOGI(TAG, "WS2812 on GPIO%u (RMT)", (unsigned)CYBEER_GPIO_LED_DATA);
 }
-void cybeer_led_set_fx(cybeer_led_fx_t fx)
+static void apply_fx_immediate(cybeer_led_fx_t fx)
 {
     if (fx == s_fx_requested) {
         return;
@@ -228,12 +244,27 @@ void cybeer_led_set_fx(cybeer_led_fx_t fx)
     }
     s_fx_requested = fx;
 }
+
+void cybeer_led_set_fx(cybeer_led_fx_t fx)
+{
+    if (fx == CYBEER_LED_FX_FINISHED) {
+        s_delayed_fx = fx;
+        s_delayed_fx_at_us = esp_timer_get_time() + (int64_t)FINISHED_FLASH_DELAY_US;
+        return;
+    }
+    s_delayed_fx_at_us = 0;
+    apply_fx_immediate(fx);
+}
 void cybeer_led_set_unclaimed_flag(bool has_unclaimed)
 {
     s_has_unclaimed_run = has_unclaimed;
 }
 void cybeer_led_task_tick(int64_t now_us)
 {
+    if (s_delayed_fx_at_us != 0 && now_us >= s_delayed_fx_at_us) {
+        s_delayed_fx_at_us = 0;
+        apply_fx_immediate(s_delayed_fx);
+    }
     esp_err_t e = render_frame(now_us);
     if (e != ESP_OK) {
         ESP_LOGD(TAG, "strip err %s", esp_err_to_name(e));

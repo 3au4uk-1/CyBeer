@@ -288,6 +288,8 @@ esp_err_t cybeer_ws_register(httpd_handle_t hd)
     return ESP_OK;
 }
 
+static esp_timer_handle_t s_state_broadcast_timer;
+
 void cybeer_ws_broadcast_state(void)
 {
     if (!s_hd) {
@@ -307,6 +309,32 @@ void cybeer_ws_broadcast_state(void)
     }
     broadcast_text(printed, strlen(printed));
     free(printed);
+}
+
+static void state_broadcast_timer_cb(void *arg)
+{
+    (void)arg;
+    cybeer_ws_broadcast_state();
+}
+
+void cybeer_ws_broadcast_state_deferred(int64_t delay_us)
+{
+    if (!s_hd || delay_us <= 0) {
+        cybeer_ws_broadcast_state();
+        return;
+    }
+    if (s_state_broadcast_timer == NULL) {
+        const esp_timer_create_args_t args = {
+            .callback = &state_broadcast_timer_cb,
+            .name = "ws_state_defer",
+        };
+        if (esp_timer_create(&args, &s_state_broadcast_timer) != ESP_OK) {
+            cybeer_ws_broadcast_state();
+            return;
+        }
+    }
+    (void)esp_timer_stop(s_state_broadcast_timer);
+    (void)esp_timer_start_once(s_state_broadcast_timer, (uint64_t)delay_us);
 }
 
 void cybeer_ws_timer_tick(int64_t now_us)
