@@ -12,6 +12,8 @@ bool cybeer_wifi_sta_connected(void);
 void cybeer_wifi_get_sta_ip_str(char *buf, size_t len);
 bool cybeer_wifi_is_started(void);
 bool cybeer_wifi_sta_credentials_configured(void);
+/** True if AP was activated as fallback due to STA connection failure. */
+bool cybeer_wifi_ap_is_fallback(void);
 /** SoftAP name, e.g. CyBeer-A1B2C3 (valid after cybeer_wifi_start). */
 void cybeer_wifi_get_ap_ssid_str(char *buf, size_t len);
 

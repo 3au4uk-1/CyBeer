@@ -48,12 +48,15 @@ static bool s_sntp_started;
 static char s_sta_ip_str[16];
 static char s_ap_ssid[33];
 static int s_sta_retry_count;
+#define STA_FALLBACK_AP_THRESHOLD 5
+static bool s_fallback_ap_active;
 static esp_timer_handle_t s_sta_reconnect_timer;
 
 static esp_event_handler_instance_t s_wifi_inst;
 static esp_event_handler_instance_t s_ip_inst;
 
 static void dns_server_task(void *arg);
+static esp_err_t activate_fallback_ap(void);
 
 static void sta_reconnect_timer_cb(void *arg)
 {
@@ -69,6 +72,10 @@ static void schedule_sta_reconnect(void)
         delay_ms = STA_RECONNECT_MAX_DELAY_MS;
     }
     s_sta_retry_count++;
+
+    if (s_sta_retry_count >= STA_FALLBACK_AP_THRESHOLD && !s_fallback_ap_active) {
+        (void)activate_fallback_ap();
+    }
 
     if (s_sta_reconnect_timer == NULL) {
         const esp_timer_create_args_t args = {
@@ -575,6 +582,50 @@ static void build_ap_ssid(char *out, size_t out_len)
     snprintf(out, out_len, "CyBeer-%02X%02X%02X", mac[3], mac[4], mac[5]);
 }
 
+static esp_err_t activate_fallback_ap(void)
+{
+    if (s_fallback_ap_active) {
+        return ESP_OK;
+    }
+
+    ESP_LOGW(TAG, "STA failed %d times, activating fallback AP", STA_FALLBACK_AP_THRESHOLD);
+
+    if (s_ap_netif == NULL) {
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+        if (s_ap_netif == NULL) {
+            ESP_LOGE(TAG, "fallback: ap netif create failed");
+            return ESP_FAIL;
+        }
+        esp_err_t err = ap_netif_configure_dhcps(s_ap_netif);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "fallback: dhcps config failed: %s", esp_err_to_name(err));
+            return err;
+        }
+    }
+
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "fallback: mode apsta");
+
+    build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
+    wifi_config_t ap_cfg = { 0 };
+    strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
+    ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
+    ap_cfg.ap.channel = 1;
+    ap_cfg.ap.max_connection = 10;
+    ap_cfg.ap.beacon_interval = 100;
+    ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
+    ap_cfg.ap.password[0] = '\0';
+
+    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "fallback: cfg ap");
+    (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
+
+    start_captive_dns_task();
+    cybeer_led_set_fx(CYBEER_LED_FX_WIFI_SETUP);
+
+    s_fallback_ap_active = true;
+    ESP_LOGI(TAG, "Fallback AP active: SSID \"%s\" @ 192.168.4.1", s_ap_ssid);
+    return ESP_OK;
+}
+
 esp_err_t cybeer_wifi_start(void)
 {
     ESP_RETURN_ON_FALSE(s_init_done, ESP_ERR_INVALID_STATE, TAG, "init first");
@@ -586,27 +637,11 @@ esp_err_t cybeer_wifi_start(void)
     char sta_pass[CYBEER_WIFI_PASS_MAX];
     bool have_sta = (cybeer_nvs_get_wifi(sta_ssid, sizeof(sta_ssid), sta_pass, sizeof(sta_pass)) == ESP_OK);
 
-    build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
-
-    s_ap_netif = esp_netif_create_default_wifi_ap();
-    ESP_RETURN_ON_FALSE(s_ap_netif != NULL, ESP_FAIL, TAG, "ap netif");
-
-    ESP_RETURN_ON_ERROR(ap_netif_configure_dhcps(s_ap_netif), TAG, "ap ip/dhcp");
-
-    wifi_config_t ap_cfg = { 0 };
-    strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
-    ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
-    ap_cfg.ap.channel = 1;
-    ap_cfg.ap.max_connection = 10;
-    ap_cfg.ap.beacon_interval = 100;
-    ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
-    ap_cfg.ap.password[0] = '\0';
-
     if (have_sta) {
         s_sta_netif = esp_netif_create_default_wifi_sta();
         ESP_RETURN_ON_FALSE(s_sta_netif != NULL, ESP_FAIL, TAG, "sta netif");
 
-        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "mode apsta");
+        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "mode sta");
 
         wifi_config_t sta_cfg = { 0 };
         strlcpy((char *)sta_cfg.sta.ssid, sta_ssid, sizeof(sta_cfg.sta.ssid));
@@ -618,9 +653,24 @@ esp_err_t cybeer_wifi_start(void)
             sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
         }
 
-        ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "cfg ap");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg), TAG, "cfg sta");
     } else {
+        build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
+
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+        ESP_RETURN_ON_FALSE(s_ap_netif != NULL, ESP_FAIL, TAG, "ap netif");
+
+        ESP_RETURN_ON_ERROR(ap_netif_configure_dhcps(s_ap_netif), TAG, "ap ip/dhcp");
+
+        wifi_config_t ap_cfg = { 0 };
+        strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
+        ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
+        ap_cfg.ap.channel = 1;
+        ap_cfg.ap.max_connection = 10;
+        ap_cfg.ap.beacon_interval = 100;
+        ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
+        ap_cfg.ap.password[0] = '\0';
+
         s_sta_netif = NULL;
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_AP), TAG, "mode ap");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "cfg ap");
@@ -628,18 +678,14 @@ esp_err_t cybeer_wifi_start(void)
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "wifi_ps_none");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi_start");
-    /* Keep phones on SoftAP during long runs (default idle timeout can drop clients). */
-    (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
 
-    ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24 (open)", s_ap_ssid);
     if (have_sta) {
-        ESP_LOGI(TAG, "STA joining: %s", sta_ssid);
+        ESP_LOGI(TAG, "STA-only mode");
     } else {
+        (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
+        ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24 (open)", s_ap_ssid);
         ESP_LOGI(TAG, "Provisioning mode (no STA credentials)");
         cybeer_led_set_fx(CYBEER_LED_FX_WIFI_SETUP);
-    }
-
-    if (!have_sta) {
         start_captive_dns_task();
     }
 
@@ -678,6 +724,11 @@ bool cybeer_wifi_sta_credentials_configured(void)
     char sta_ssid[CYBEER_WIFI_SSID_MAX];
     char sta_pass[CYBEER_WIFI_PASS_MAX];
     return cybeer_nvs_get_wifi(sta_ssid, sizeof(sta_ssid), sta_pass, sizeof(sta_pass)) == ESP_OK;
+}
+
+bool cybeer_wifi_ap_is_fallback(void)
+{
+    return s_fallback_ap_active;
 }
 
 void cybeer_wifi_get_ap_ssid_str(char *buf, size_t len)
