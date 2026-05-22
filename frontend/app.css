@@ -211,3 +211,193 @@ code {
   color: var(--amber);
   font-size: 0.85em;
 }
+
+/* === Navigation === */
+nav {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+nav a.active {
+  color: var(--gold);
+  text-decoration: underline;
+}
+
+/* === Live timer (large) === */
+.timer-hero {
+  text-align: center;
+  padding: 1.5rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.timer-hero .timer-value {
+  font-size: 3.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+  line-height: 1.1;
+}
+
+.timer-hero .timer-label {
+  font-size: 1rem;
+  color: var(--muted);
+  margin-top: 0.35rem;
+}
+
+.timer-hero.state-prep .timer-value { color: var(--ok); }
+.timer-hero.state-running .timer-value { color: var(--amber); }
+.timer-hero.state-finished .timer-value { color: var(--gold); }
+.timer-hero.state-ready .timer-value { color: var(--muted); }
+
+@keyframes pulse-amber {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.timer-hero.state-running .timer-value {
+  animation: pulse-amber 1s ease-in-out infinite;
+}
+
+/* === Leaderboard === */
+.leaderboard td:first-child {
+  font-weight: 700;
+  color: var(--amber);
+  width: 2.5rem;
+}
+
+.leaderboard a {
+  color: var(--foam);
+  text-decoration: none;
+}
+.leaderboard a:hover {
+  color: var(--gold);
+  text-decoration: underline;
+}
+
+/* === Player card === */
+.player-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.player-card h2 {
+  margin: 0;
+  color: var(--gold);
+}
+.player-card .player-rank {
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.stat-item {
+  background: var(--bg);
+  border: 1px solid var(--stout);
+  border-radius: 8px;
+  padding: 0.75rem;
+  text-align: center;
+}
+.stat-item .stat-val {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+.stat-item .stat-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+/* === Claim === */
+.claim-panel select {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--stout);
+  background: var(--bg);
+  color: var(--foam);
+}
+.claim-result {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--gold);
+  margin: 0.5rem 0;
+}
+
+/* === Tournament enhancements === */
+.bracket-match.active-match {
+  border-color: var(--gold);
+  box-shadow: 0 0 8px rgba(232, 180, 74, 0.3);
+  animation: pulse-border 2s ease-in-out infinite;
+}
+@keyframes pulse-border {
+  0%, 100% { box-shadow: 0 0 8px rgba(232, 180, 74, 0.3); }
+  50% { box-shadow: 0 0 16px rgba(232, 180, 74, 0.5); }
+}
+.champion-card {
+  text-align: center;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, rgba(232, 180, 74, 0.15), rgba(199, 128, 45, 0.1));
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+}
+.champion-card .champion-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+/* === Admin tournament section === */
+.participant-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.participant-checkboxes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--bg);
+  border: 1px solid var(--stout);
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.participant-checkboxes input:checked + span {
+  color: var(--gold);
+}
+
+/* === Sound toggle === */
+.sound-toggle {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  background: var(--stout);
+  border: 1px solid var(--amber);
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.3rem;
+  color: var(--amber);
+  z-index: 100;
+}
+.sound-toggle.active {
+  background: var(--amber);
+  color: var(--bg);
+}

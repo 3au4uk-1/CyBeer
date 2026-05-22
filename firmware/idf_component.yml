@@ -1,3 +1,5 @@
-## Managed components (Espressif LED strip driver)
+# Managed components (ESP-IDF 6: json and littlefs moved out of core IDF)
 dependencies:
   espressif/led_strip: "^3.0.0"
+  joltwallet/littlefs: "^1.21.1"
+  espressif/cjson: "^1.7.19"

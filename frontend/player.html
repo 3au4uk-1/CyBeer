@@ -1,33 +1,136 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CyBeer — статистика игрока</title>
-  <link rel="stylesheet" href="app.css" />
+  <title>CyBeer — Игрок</title>
+  <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
-  <main class="container">
-    <h1>Статистика</h1>
-    <p id="hint">Укажите в адресе <code>?id=</code> с UUID участника.</p>
-    <pre id="out" class="mono"></pre>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🍺</span>
+      <h1>CyBeer</h1>
+    </div>
+    <div class="status-line">
+      <div class="battery" id="batteryWrap" title="Батарея">
+        <span class="battery-icon" id="batteryIcon" aria-hidden="true">🔋</span>
+        <span id="batteryPct">—</span>
+      </div>
+      <span id="stateBadge" class="badge">…</span>
+      <span class="ver" id="fwVer"></span>
+    </div>
+    <nav></nav>
+  </header>
+
+  <main>
+    <section class="panel" id="playerPanel">
+      <div class="player-card">
+        <h2 id="playerName">Загрузка…</h2>
+        <div class="player-rank" id="playerRank"></div>
+      </div>
+
+      <div class="stat-grid" id="statGrid"></div>
+
+      <h3>История заездов</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Дата</th><th>Время</th></tr>
+          </thead>
+          <tbody id="playerRunsBody"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
+
+  <script>window.__CYBEER_PAGE__ = "player";</script>
+  <script src="/app.js"></script>
   <script>
-    (function () {
-      var p = new URLSearchParams(location.search);
-      var id = p.get("id");
-      var out = document.getElementById("out");
-      var hint = document.getElementById("hint");
-      if (!id) {
-        out.textContent = "";
-        return;
-      }
-      hint.textContent = "Участник: " + id;
-      fetch("/api/participants/" + encodeURIComponent(id) + "/stats")
-        .then(function (r) { return r.json(); })
-        .then(function (j) { out.textContent = JSON.stringify(j, null, 2); })
-        .catch(function (e) { out.textContent = String(e); });
-    })();
+  (function () {
+    var cy = window.__cybeer;
+    var p = new URLSearchParams(location.search);
+    var id = p.get("id");
+    if (!id) {
+      document.getElementById("playerName").textContent = "Не указан ID участника";
+      return;
+    }
+
+    cy.loadParticipants().then(function () {
+      var name = cy.nameByPid.get(id) || id.slice(0, 12) + "…";
+      document.getElementById("playerName").textContent = name;
+      document.title = "CyBeer — " + name;
+    });
+
+    fetch("/api/participants/" + encodeURIComponent(id) + "/stats")
+      .then(function (r) { return r.json(); })
+      .then(function (st) {
+        var grid = document.getElementById("statGrid");
+        var items = [
+          { label: "Заездов", val: st.runCount || 0 },
+          { label: "Рекорд", val: cy.formatDuration(st.bestDurationUs) },
+          { label: "Среднее", val: cy.formatDuration(st.avgDurationUs) },
+          { label: "Худшее", val: cy.formatDuration(st.worstDurationUs) },
+          { label: "Последний", val: cy.formatDuration(st.lastDurationUs) },
+        ];
+        grid.innerHTML = "";
+        for (var i = 0; i < items.length; i++) {
+          var div = document.createElement("div");
+          div.className = "stat-item";
+          div.innerHTML =
+            '<div class="stat-val">' +
+            items[i].val +
+            '</div><div class="stat-label">' +
+            items[i].label +
+            "</div>";
+          grid.appendChild(div);
+        }
+      })
+      .catch(function () {
+        document.getElementById("statGrid").innerHTML =
+          '<p class="hint">Ошибка загрузки статистики</p>';
+      });
+
+    fetch("/api/leaderboard?limit=50")
+      .then(function (r) { return r.json(); })
+      .then(function (lb) {
+        if (!Array.isArray(lb)) return;
+        for (var i = 0; i < lb.length; i++) {
+          if (lb[i].participantId === id) {
+            document.getElementById("playerRank").textContent =
+              "Место в лидерборде: #" + lb[i].rank;
+            break;
+          }
+        }
+      })
+      .catch(function () {});
+
+    fetch("/api/participants/" + encodeURIComponent(id) + "/runs")
+      .then(function (r) { return r.json(); })
+      .then(function (runs) {
+        var body = document.getElementById("playerRunsBody");
+        if (!Array.isArray(runs) || runs.length === 0) {
+          body.innerHTML =
+            '<tr><td colspan="2" style="color:var(--muted)">Нет заездов</td></tr>';
+          return;
+        }
+        body.innerHTML = "";
+        for (var i = 0; i < runs.length; i++) {
+          var tr = document.createElement("tr");
+          tr.innerHTML =
+            "<td>" +
+            cy.formatDate(runs[i].finished_at) +
+            "</td><td>" +
+            cy.formatDuration(runs[i].duration_us) +
+            "</td>";
+          body.appendChild(tr);
+        }
+      })
+      .catch(function () {
+        document.getElementById("playerRunsBody").innerHTML =
+          '<tr><td colspan="2">Ошибка</td></tr>';
+      });
+  })();
   </script>
 </body>
 </html>

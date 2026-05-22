@@ -147,7 +147,7 @@ esp_err_t cybeer_battery_init(void)
 
     adc_oneshot_chan_cfg_t chcfg = {
         .bitwidth = ADC_BITWIDTH_DEFAULT,
-        .atten = ADC_ATTEN_DB_11,
+        .atten = ADC_ATTEN_DB_12,
     };
     err = adc_oneshot_config_channel(s_adc, BATTERY_ADC_CH, &chcfg);
     if (err != ESP_OK) {
@@ -157,14 +157,14 @@ esp_err_t cybeer_battery_init(void)
         return err;
     }
 
-    s_cali_ok = battery_adc_calibration_init(ADC_UNIT_1, ADC_ATTEN_DB_11, &s_cali);
+    s_cali_ok = battery_adc_calibration_init(ADC_UNIT_1, ADC_ATTEN_DB_12, &s_cali);
     if (s_cali_ok) {
         ESP_LOGI(TAG, "ADC calibration enabled");
     } else {
         ESP_LOGW(TAG, "ADC calibration unavailable; using linear estimate");
     }
 
-    ESP_LOGI(TAG, "Battery ADC ADC1 GPIO%u, atten 11 dB, sample every %d ms", (unsigned)CYBEER_GPIO_BATTERY_ADC,
+    ESP_LOGI(TAG, "Battery ADC ADC1 GPIO%u, atten 12 dB, sample every %d ms", (unsigned)CYBEER_GPIO_BATTERY_ADC,
              SAMPLE_PERIOD_MS);
 
     const BaseType_t ok = xTaskCreate(battery_task, "cybeer_battery", 3072, NULL, tskIDLE_PRIORITY + 2, NULL);

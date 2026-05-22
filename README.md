@@ -22,7 +22,7 @@
 | WS2812 DATA      | 8    | RMT-драйвер       |
 | Батарея (ADC)    | 0    | Канал АЦП по конфигу |
 
-Подробнее — [docs/wiring.md](docs/wiring.md).
+Подробнее — [docs/wiring.md](docs/wiring.md) (полная распиновка и таблицы подключения), [docs/flashing.md](docs/flashing.md) (прошивка).
 
 ## Схема подключения (обзор)
 
@@ -40,16 +40,10 @@
 
 ## Сборка и прошивка
 
-Рабочий каталог прошивки: `firmware/`.
+Кратко: `cd firmware && idf.py set-target esp32c3 && idf.py build && idf.py -p <PORT> flash monitor`.
 
-```bash
-cd firmware
-idf.py set-target esp32c3
-idf.py build
-idf.py flash monitor
-```
-
-Разметка разделов и **OTA** описаны в [firmware/README.md](firmware/README.md).
+Полная инструкция (Windows/Linux, разделы, LittleFS, OTA, типичные ошибки) — **[docs/flashing.md](docs/flashing.md)**.  
+Разметка разделов и **OTA по сети** — [firmware/README.md](firmware/README.md).
 
 ### Образ LittleFS (веб-статика)
 

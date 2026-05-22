@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -13,45 +13,42 @@
       <h1>CyBeer</h1>
     </div>
     <div class="status-line">
-      <div class="battery" id="batteryWrap" title="Battery" aria-label="Battery">
+      <div class="battery" id="batteryWrap" title="Батарея">
         <span class="battery-icon" id="batteryIcon" aria-hidden="true">🔋</span>
         <span id="batteryPct">—</span>
       </div>
       <span id="stateBadge" class="badge">…</span>
       <span class="ver" id="fwVer"></span>
     </div>
-    <nav>
-      <a href="/claim.html">Claim run</a>
-      <a href="/tournament.html">Tournament</a>
-      <a href="/admin.html">Admin</a>
-    </nav>
+    <nav></nav>
   </header>
 
   <main>
+    <section class="panel timer-hero" id="timerHero">
+      <div class="timer-value" id="timerValue">0.00с</div>
+      <div class="timer-label" id="timerLabel">Готов к старту</div>
+    </section>
+
     <section class="panel">
-      <p class="live-timer-line">Live timer: <span id="live-timer">—</span></p>
-      <p class="hint" id="activeTournamentLine" aria-live="polite"></p>
-      <h2>Recent runs</h2>
-      <p class="hint">Updates every 5 seconds. Unclaimed runs show “—” for player.</p>
+      <h2>Лидерборд</h2>
+      <p class="hint"><a href="/spectator.html">Режим для ТВ</a></p>
       <div class="table-wrap">
-        <table>
+        <table class="leaderboard">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Duration</th>
-              <th>Player</th>
-              <th>Claimed</th>
+              <th>#</th>
+              <th>Имя</th>
+              <th>Время</th>
+              <th>Дата</th>
             </tr>
           </thead>
-          <tbody id="runsBody"></tbody>
+          <tbody id="leaderboardBody"></tbody>
         </table>
       </div>
     </section>
   </main>
 
+  <script>window.__CYBEER_PAGE__ = "index";</script>
   <script src="/app.js"></script>
-  <script>
-    window.__CYBEER_PAGE__ = "index";
-  </script>
 </body>
 </html>

@@ -12,6 +12,8 @@ bool cybeer_wifi_sta_connected(void);
 void cybeer_wifi_get_sta_ip_str(char *buf, size_t len);
 bool cybeer_wifi_is_started(void);
 bool cybeer_wifi_sta_credentials_configured(void);
+/** SoftAP name, e.g. CyBeer-A1B2C3 (valid after cybeer_wifi_start). */
+void cybeer_wifi_get_ap_ssid_str(char *buf, size_t len);
 
 /**
  * Register provisioning/admin URI handlers on an existing HTTP server (e.g. cybeer_web).

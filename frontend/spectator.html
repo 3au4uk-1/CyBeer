@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CyBeer — Spectator</title>
+  <link rel="stylesheet" href="/app.css" />
+  <style>
+    body { overflow: hidden; cursor: default; }
+    .spec-wrap { display: flex; flex-direction: column; height: 100vh; padding: 1rem; }
+    .spec-timer { flex: 0 0 auto; text-align: center; padding: 2rem 0; }
+    .spec-timer .timer-value { font-size: min(12vw, 10rem); font-weight: 700; font-variant-numeric: tabular-nums; color: var(--gold); line-height: 1; }
+    .spec-timer .timer-label { font-size: 1.5rem; color: var(--muted); margin-top: 0.5rem; }
+    .spec-timer.state-prep .timer-value { color: var(--ok); }
+    .spec-timer.state-running .timer-value { color: var(--amber); animation: pulse-amber 1s ease-in-out infinite; }
+    .spec-timer.state-finished .timer-value { color: var(--gold); }
+    .spec-content { flex: 1 1 auto; overflow: hidden; }
+    .spec-lb table { width: 100%; font-size: min(3vw, 1.5rem); }
+    .spec-lb th, .spec-lb td { padding: 0.6rem 0.8rem; }
+    .spec-lb td:first-child { font-weight: 700; color: var(--amber); width: 3rem; }
+    .spec-controls { position: fixed; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; z-index: 100; opacity: 0.3; transition: opacity 0.3s; }
+    .spec-controls:hover { opacity: 1; }
+    .spec-btn { background: var(--stout); border: 1px solid var(--amber); border-radius: 8px; padding: 0.4rem 0.8rem; color: var(--amber); cursor: pointer; font-size: 0.85rem; }
+    .spec-btn.active { background: var(--amber); color: var(--bg); }
+    .spec-bracket { display: flex; flex-direction: row; gap: 1rem; align-items: stretch; overflow-x: auto; height: 100%; }
+    .spec-bracket .bracket-col { min-width: 14rem; }
+    .spec-bracket .bracket-match { font-size: min(2.5vw, 1.1rem); }
+  </style>
+</head>
+<body>
+  <div class="spec-wrap">
+    <div class="spec-timer" id="specTimer">
+      <div class="timer-value" id="timerValue">0.00с</div>
+      <div class="timer-label" id="timerLabel">Готов к старту</div>
+    </div>
+    <div class="spec-content" id="specContent">
+      <div class="spec-lb" id="specLeaderboard">
+        <table class="leaderboard">
+          <thead><tr><th>#</th><th>Имя</th><th>Время</th></tr></thead>
+          <tbody id="leaderboardBody"></tbody>
+        </table>
+      </div>
+      <div class="spec-bracket" id="specBracket" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="spec-controls">
+    <button class="spec-btn" id="modeToggle">Турнир</button>
+    <button class="spec-btn" id="soundToggle" title="Звук">🔇</button>
+  </div>
+
+  <script>window.__CYBEER_PAGE__ = "spectator";</script>
+  <script src="/app.js"></script>
+  <script>
+  (function () {
+    var cy = window.__cybeer;
+    var params = new URLSearchParams(location.search);
+    var mode = params.get("mode") || "leaderboard";
+    var lbDiv = document.getElementById("specLeaderboard");
+    var brDiv = document.getElementById("specBracket");
+    var modeBtn = document.getElementById("modeToggle");
+    var soundBtn = document.getElementById("soundToggle");
+
+    function applyMode() {
+      if (mode === "tournament") {
+        lbDiv.style.display = "none";
+        brDiv.style.display = "flex";
+        modeBtn.textContent = "Лидерборд";
+        modeBtn.classList.add("active");
+        loadBracket();
+      } else {
+        lbDiv.style.display = "";
+        brDiv.style.display = "none";
+        modeBtn.textContent = "Турнир";
+        modeBtn.classList.remove("active");
+        cy.loadLeaderboard(10);
+      }
+    }
+
+    modeBtn.addEventListener("click", function () {
+      mode = mode === "leaderboard" ? "tournament" : "leaderboard";
+      history.replaceState(null, "", "?mode=" + mode);
+      applyMode();
+    });
+
+    soundBtn.addEventListener("click", function () {
+      cy.enableSound();
+      soundBtn.textContent = "🔊";
+      soundBtn.classList.add("active");
+    });
+
+    var specTimer = document.getElementById("specTimer");
+    cy.updateTimerHero = function (state, durationUs) {
+      var val = document.getElementById("timerValue");
+      var lbl = document.getElementById("timerLabel");
+      if (!specTimer || !val) return;
+      specTimer.className = "spec-timer state-" + state.toLowerCase();
+      var labels = {
+        PREP: "Готов к старту",
+        RUNNING: "",
+        FINISHED: "Ожидает заявки",
+        READY: "Последний результат",
+      };
+      if (lbl) lbl.textContent = labels[state] || "";
+      if (state === "PREP") val.textContent = "0.00с";
+      else if (typeof durationUs === "number") val.textContent = cy.formatDuration(durationUs);
+    };
+
+    function shortId(s) {
+      if (!s || typeof s !== "string") return "—";
+      return s.length > 14 ? s.slice(0, 6) + "…" + s.slice(-4) : s;
+    }
+
+    function pname(pid) {
+      if (!pid) return "bye";
+      return cy.nameByPid.get(pid) || shortId(pid);
+    }
+
+    async function loadBracket() {
+      try {
+        await cy.loadParticipants();
+        var r = await fetch("/api/tournaments/active");
+        var data = await r.json();
+        var tor = data.tournament;
+        var pending = data.pendingNextRun || null;
+        brDiv.innerHTML = "";
+        if (!tor || !Array.isArray(tor.matches)) {
+          brDiv.innerHTML = '<p style="color:var(--muted);padding:2rem">Нет активного турнира</p>';
+          return;
+        }
+        var cols = {};
+        for (var mi = 0; mi < tor.matches.length; mi++) {
+          var m = tor.matches[mi];
+          var c = typeof m.column === "number" ? m.column : 0;
+          if (!cols[c]) cols[c] = [];
+          cols[c].push(m);
+        }
+        var order = Object.keys(cols)
+          .map(Number)
+          .sort(function (a, b) {
+            return b - a;
+          });
+        for (var oi = 0; oi < order.length; oi++) {
+          var col = order[oi];
+          var colEl = document.createElement("div");
+          colEl.className = "bracket-col";
+          var h = document.createElement("h3");
+          h.textContent = "Раунд " + (oi + 1);
+          h.style.color = "var(--muted)";
+          colEl.appendChild(h);
+          var list = cols[col]
+            .slice()
+            .sort(function (a, b) {
+              return (a.index || 0) - (b.index || 0);
+            });
+          for (var li = 0; li < list.length; li++) {
+            var mm = list[li];
+            var won = !!(mm.winnerParticipantId && String(mm.winnerParticipantId).length);
+            var isActive = pending && pending.matchId === mm.id;
+            var el = document.createElement("article");
+            el.className = "bracket-match" + (won ? " win" : "") + (isActive ? " active-match" : "");
+            el.innerHTML =
+              '<div style="color:var(--muted);font-size:0.75rem">Матч ' +
+              shortId(mm.id) +
+              "</div>" +
+              '<div style="margin:4px 0"><span style="color:var(--gold)">A</span> ' +
+              pname(mm.participantAId) +
+              "</div>" +
+              '<div><span style="color:var(--gold)">B</span> ' +
+              pname(mm.participantBId) +
+              "</div>" +
+              (won
+                ? '<div style="margin-top:4px;color:var(--ok)">Победитель: ' +
+                  pname(mm.winnerParticipantId) +
+                  "</div>"
+                : "");
+            colEl.appendChild(el);
+          }
+          brDiv.appendChild(colEl);
+        }
+      } catch (_) {
+        brDiv.innerHTML = '<p style="color:var(--muted);padding:2rem">Ошибка загрузки</p>';
+      }
+    }
+
+    if (mode === "tournament") setInterval(loadBracket, 8000);
+
+    var cursorTimer;
+    document.addEventListener("mousemove", function () {
+      document.body.style.cursor = "default";
+      clearTimeout(cursorTimer);
+      cursorTimer = setTimeout(function () {
+        document.body.style.cursor = "none";
+      }, 3000);
+    });
+
+    cy.connectLiveWs();
+    applyMode();
+    fetch("/api/status")
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (st) {
+        var dur =
+          st.state === "FINISHED" && typeof st.unclaimedRunDurationUs === "number"
+            ? st.unclaimedRunDurationUs
+            : null;
+        cy.updateTimerHero(st.state || "PREP", dur);
+      })
+      .catch(function () {});
+  })();
+  </script>
+</body>
+</html>

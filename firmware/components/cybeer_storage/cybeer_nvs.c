@@ -5,7 +5,7 @@
 #include "cybeer_config.h"
 #include "esp_check.h"
 #include "esp_random.h"
-#include "mbedtls/sha256.h"
+#include "mbedtls/md.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -232,7 +232,8 @@ static esp_err_t pin_hash_derive(const uint8_t salt[CYBEER_ADMIN_PIN_SALT_LEN], 
     uint8_t in[CYBEER_ADMIN_PIN_SALT_LEN + 96];
     memcpy(in, salt, CYBEER_ADMIN_PIN_SALT_LEN);
     memcpy(in + CYBEER_ADMIN_PIN_SALT_LEN, pin, pn);
-    if (mbedtls_sha256(in, CYBEER_ADMIN_PIN_SALT_LEN + pn, out, 0) != 0) {
+    const mbedtls_md_info_t *md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!md || mbedtls_md(md, in, CYBEER_ADMIN_PIN_SALT_LEN + pn, out) != 0) {
         return ESP_FAIL;
     }
     return ESP_OK;

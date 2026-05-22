@@ -8,6 +8,7 @@
 #include "cybeer_storage.h"
 
 #include "cJSON.h"
+#include "esp_check.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_server.h"
 #include "esp_https_ota.h"
@@ -19,7 +20,7 @@
 
 static const char *TAG = "cybeer_ota";
 
-#define CYBEER_OTA_MAX_FIRMWARE 0x130000
+#define CYBEER_OTA_MAX_FIRMWARE 0x140000
 #define CYBEER_OTA_URL_MAX      512
 #define CYBEER_OTA_STACK        (1024 * 10)
 
@@ -239,7 +240,7 @@ static void drain_req(httpd_req_t *req, size_t *received, size_t total)
         if (total - *received < w) {
             w = total - *received;
         }
-        int r = httpd_req_recv(req, drain, w);
+        int r = httpd_req_recv(req, (char *)drain, w);
         if (r <= 0) {
             break;
         }
@@ -324,7 +325,7 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
         size_t body_off = 0;
 
         while (!hdr_done && pre_len < sizeof(pre)) {
-            int r = httpd_req_recv(req, pre + pre_len, sizeof(pre) - pre_len);
+            int r = httpd_req_recv(req, (char *)(pre + pre_len), sizeof(pre) - pre_len);
             if (r <= 0) {
                 esp_ota_abort(oh);
                 xSemaphoreGive(s_ota_mx);
@@ -364,7 +365,7 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
             if ((size_t)req->content_len - received < want) {
                 want = (size_t)req->content_len - received;
             }
-            int r = httpd_req_recv(req, buf, want);
+            int r = httpd_req_recv(req, (char *)buf, want);
             if (r <= 0) {
                 esp_ota_abort(oh);
                 xSemaphoreGive(s_ota_mx);
@@ -392,7 +393,7 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
     uint8_t buf[4096];
     while (remain > 0) {
         size_t chunk = remain > sizeof(buf) ? sizeof(buf) : remain;
-        int r = httpd_req_recv(req, buf, chunk);
+        int r = httpd_req_recv(req, (char *)buf, chunk);
         if (r <= 0) {
             esp_ota_abort(oh);
             xSemaphoreGive(s_ota_mx);

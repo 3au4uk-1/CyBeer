@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "esp_check.h"
 #include "esp_log.h"
 
 static const char *TAG = "cybeer_tournament";
@@ -109,6 +110,8 @@ static esp_err_t save_both(cJSON *tors, cJSON *active)
 
 esp_err_t cybeer_tournament_generate_into(cJSON *tournament_root)
 {
+    esp_err_t ret = ESP_OK;
+
     ESP_RETURN_ON_FALSE(tournament_root && cJSON_IsObject(tournament_root), ESP_ERR_INVALID_ARG, TAG,
                         "tor");
 
@@ -240,8 +243,8 @@ esp_err_t cybeer_tournament_create_named(const char *name, const cJSON *particip
                         "participants");
 
     cJSON *tors = NULL;
-    esp_err_t err = cybeer_storage_load_tournaments_cjson(&tors);
-    ESP_RETURN_ON_ERROR(err, TAG, "load tors");
+    esp_err_t ret = cybeer_storage_load_tournaments_cjson(&tors);
+    ESP_RETURN_ON_ERROR(ret, TAG, "load tors");
 
     ESP_GOTO_ON_FALSE(tors != NULL && cJSON_IsArray(tors), ESP_FAIL, cleanup, TAG, "tors");
 
@@ -258,19 +261,19 @@ esp_err_t cybeer_tournament_create_named(const char *name, const cJSON *particip
     ESP_GOTO_ON_FALSE(pids_dup != NULL, ESP_ERR_NO_MEM, cleanup_t, TAG, "dup pids");
     cJSON_AddItemToObject(t, "participantIds", pids_dup);
 
-    err = cybeer_tournament_generate_into(t);
-    if (err != ESP_OK) {
+    ret = cybeer_tournament_generate_into(t);
+    if (ret != ESP_OK) {
         cJSON_Delete(t);
         cJSON_Delete(tors);
-        return err;
+        return ret;
     }
 
     cJSON_AddItemToArray(tors, t);
-    err = cybeer_storage_save_tournaments_cjson(tors);
+    ret = cybeer_storage_save_tournaments_cjson(tors);
 
     ESP_LOGI(TAG, "created tournament id=%s", tournament_id_out);
     cJSON_Delete(tors);
-    return err;
+    return ret;
 
 cleanup_t:
     cJSON_Delete(t);
@@ -302,8 +305,8 @@ esp_err_t cybeer_tournament_start_by_id(const char *tournament_id)
 
     cJSON *tors = NULL;
     cJSON *active = NULL;
-    esp_err_t err = load_pair(&tors, &active);
-    ESP_RETURN_ON_ERROR(err, TAG, "load");
+    esp_err_t ret = load_pair(&tors, &active);
+    ESP_RETURN_ON_ERROR(ret, TAG, "load");
 
     ESP_GOTO_ON_FALSE(tournament_active_id_locked(active)[0] == '\0', ESP_ERR_INVALID_STATE, cleanup, TAG,
                       "already active tournament");
@@ -325,22 +328,22 @@ esp_err_t cybeer_tournament_start_by_id(const char *tournament_id)
     cJSON_DeleteItemFromObject(active, "pendingSlot");
     cJSON_AddStringToObject(active, "pendingSlot", "");
 
-    err = save_both(tors, active);
+    ret = save_both(tors, active);
 
     cJSON_Delete(tors);
     cJSON_Delete(active);
 
-    if (err == ESP_OK) {
+    if (ret == ESP_OK) {
         (void)cybeer_tournament_notify_run_claimed("");
         ESP_LOGI(TAG, "started tournament %s", tournament_id);
     }
 
-    return err;
+    return ret;
 
 cleanup:
     cJSON_Delete(tors);
     cJSON_Delete(active);
-    return err;
+    return ret;
 }
 
 esp_err_t cybeer_tournament_assign_next_bind(const char *match_id, const char *slot_a_or_b)
@@ -351,8 +354,8 @@ esp_err_t cybeer_tournament_assign_next_bind(const char *match_id, const char *s
 
     cJSON *tors = NULL;
     cJSON *active = NULL;
-    esp_err_t err = load_pair(&tors, &active);
-    ESP_RETURN_ON_ERROR(err, TAG, "load pair");
+    esp_err_t ret = load_pair(&tors, &active);
+    ESP_RETURN_ON_ERROR(ret, TAG, "load pair");
 
     const char *tid = tournament_active_id_locked(active);
     ESP_GOTO_ON_FALSE(tid[0], ESP_ERR_INVALID_STATE, cleanup, TAG, "no active");
@@ -388,14 +391,14 @@ esp_err_t cybeer_tournament_assign_next_bind(const char *match_id, const char *s
     cJSON_DeleteItemFromObject(active, "pendingSlot");
     cJSON_AddStringToObject(active, "pendingSlot", slot_a_or_b);
 
-    err = save_both(tors, active);
+    ret = save_both(tors, active);
 
     ESP_LOGI(TAG, "assign pending match=%s slot=%s", match_id, slot_a_or_b);
 
 cleanup:
     cJSON_Delete(tors);
     cJSON_Delete(active);
-    return err;
+    return ret;
 }
 
 static int column_of_match(const cJSON *m)

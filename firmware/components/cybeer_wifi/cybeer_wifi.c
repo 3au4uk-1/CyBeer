@@ -46,6 +46,7 @@ static bool s_sta_has_ip;
 static bool s_mdns_started;
 static bool s_sntp_started;
 static char s_sta_ip_str[16];
+static char s_ap_ssid[33];
 static int s_sta_retry_count;
 static esp_timer_handle_t s_sta_reconnect_timer;
 
@@ -154,7 +155,9 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     (void)base;
     (void)data;
 
-    if (id == WIFI_EVENT_STA_START) {
+    if (id == WIFI_EVENT_AP_START) {
+        ESP_LOGI(TAG, "SoftAP started, SSID \"%s\", open, 192.168.4.1", s_ap_ssid[0] ? s_ap_ssid : "?");
+    } else if (id == WIFI_EVENT_STA_START) {
         (void)esp_wifi_connect();
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
         s_sta_has_ip = false;
@@ -365,7 +368,7 @@ static esp_err_t h_err_404(httpd_req_t *req, httpd_err_code_t err)
         return ESP_FAIL;
     }
 
-    httpd_method_t m = httpd_req_get_method(req);
+    httpd_method_t m = req->method;
     if (m != HTTP_GET && m != HTTP_HEAD) {
         httpd_resp_set_status(req, "404 Not Found");
         return httpd_resp_send(req, "Not Found", HTTPD_RESP_USE_STRLEN);
@@ -534,6 +537,8 @@ esp_err_t cybeer_wifi_init(void)
 
     wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&wcfg), TAG, "wifi_init");
+    /* CyBeer stores STA creds in namespace "cybeer"; avoid ESP-IDF Wi-Fi NVS overriding AP mode. */
+    ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "wifi_storage_ram");
 
     s_init_done = true;
     return ESP_OK;
@@ -557,8 +562,7 @@ esp_err_t cybeer_wifi_start(void)
     char sta_pass[CYBEER_WIFI_PASS_MAX];
     bool have_sta = (cybeer_nvs_get_wifi(sta_ssid, sizeof(sta_ssid), sta_pass, sizeof(sta_pass)) == ESP_OK);
 
-    char ap_ssid[32];
-    build_ap_ssid(ap_ssid, sizeof(ap_ssid));
+    build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
 
     s_ap_netif = esp_netif_create_default_wifi_ap();
     ESP_RETURN_ON_FALSE(s_ap_netif != NULL, ESP_FAIL, TAG, "ap netif");
@@ -566,8 +570,8 @@ esp_err_t cybeer_wifi_start(void)
     ESP_RETURN_ON_ERROR(ap_netif_configure_dhcps(s_ap_netif), TAG, "ap ip/dhcp");
 
     wifi_config_t ap_cfg = { 0 };
-    snprintf((char *)ap_cfg.ap.ssid, sizeof(ap_cfg.ap.ssid), "%s", ap_ssid);
-    ap_cfg.ap.ssid_len = (uint8_t)strlen(ap_ssid);
+    strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
+    ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
     ap_cfg.ap.channel = 1;
     ap_cfg.ap.max_connection = 4;
     ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
@@ -580,8 +584,8 @@ esp_err_t cybeer_wifi_start(void)
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "mode apsta");
 
         wifi_config_t sta_cfg = { 0 };
-        snprintf((char *)sta_cfg.sta.ssid, sizeof(sta_cfg.sta.ssid), "%s", sta_ssid);
-        snprintf((char *)sta_cfg.sta.password, sizeof(sta_cfg.sta.password), "%s", sta_pass);
+        strlcpy((char *)sta_cfg.sta.ssid, sta_ssid, sizeof(sta_cfg.sta.ssid));
+        strlcpy((char *)sta_cfg.sta.password, sta_pass, sizeof(sta_cfg.sta.password));
         sta_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
         if (sta_pass[0] == '\0') {
             sta_cfg.sta.threshold.authmode = WIFI_AUTH_OPEN;
@@ -597,9 +601,10 @@ esp_err_t cybeer_wifi_start(void)
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "cfg ap");
     }
 
+    ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "wifi_ps_none");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi_start");
 
-    ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24", ap_ssid);
+    ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24 (open)", s_ap_ssid);
     if (have_sta) {
         ESP_LOGI(TAG, "STA joining: %s", sta_ssid);
     } else {
@@ -615,7 +620,7 @@ esp_err_t cybeer_wifi_start(void)
         httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
         cfg.server_port = 80;
         cfg.lru_purge_enable = true;
-        esp_err_t herr = httpd_start(&cfg, &s_local_httpd);
+        esp_err_t herr = httpd_start(&s_local_httpd, &cfg);
         if (herr != ESP_OK) {
             ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(herr));
             return herr;
@@ -646,6 +651,18 @@ bool cybeer_wifi_sta_credentials_configured(void)
     char sta_ssid[CYBEER_WIFI_SSID_MAX];
     char sta_pass[CYBEER_WIFI_PASS_MAX];
     return cybeer_nvs_get_wifi(sta_ssid, sizeof(sta_ssid), sta_pass, sizeof(sta_pass)) == ESP_OK;
+}
+
+void cybeer_wifi_get_ap_ssid_str(char *buf, size_t len)
+{
+    if (!buf || len == 0) {
+        return;
+    }
+    if (!s_ap_ssid[0]) {
+        buf[0] = '\0';
+        return;
+    }
+    snprintf(buf, len, "%s", s_ap_ssid);
 }
 
 void cybeer_wifi_get_sta_ip_str(char *buf, size_t len)

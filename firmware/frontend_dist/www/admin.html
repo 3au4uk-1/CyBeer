@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Admin — CyBeer</title>
+  <title>Админка — CyBeer</title>
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
@@ -12,108 +12,131 @@
       <span class="logo" aria-hidden="true">🍺</span>
       <h1>CyBeer</h1>
     </div>
-    <nav>
-      <a href="/">Leaderboard</a>
-      <a href="/claim.html">Claim run</a>
-    </nav>
+    <nav></nav>
   </header>
 
   <main>
     <p id="adminMsg" class="msg" aria-live="polite"></p>
     <section class="panel" id="setupPanel">
-      <h2>First-time admin PIN</h2>
-      <p class="hint">Stores SHA-256 hash with random salt on the device.</p>
+      <h2>Первая настройка PIN</h2>
+      <p class="hint">SHA-256 хеш с солью хранится на устройстве.</p>
       <form id="setupPinForm">
         <label>
-          New PIN
+          Новый PIN
           <input type="password" name="pin1" autocomplete="new-password" minlength="4" maxlength="32" required />
         </label>
-        <button type="submit">Save PIN</button>
+        <button type="submit">Сохранить PIN</button>
       </form>
     </section>
 
     <section class="panel" id="unlockPanel">
-      <h2>Unlock admin</h2>
-      <p class="hint">PIN stays in session storage for this browser tab only.</p>
+      <h2>Вход в админку</h2>
+      <p class="hint">PIN сохраняется в сессии этой вкладки.</p>
       <form id="unlockForm">
         <label>
           PIN
           <input type="password" id="unlockPin" minlength="4" maxlength="32" autocomplete="off" />
         </label>
-        <button type="submit">Remember PIN</button>
+        <button type="submit">Запомнить PIN</button>
       </form>
-      <button type="button" id="clearPinBtn">Clear PIN from session</button>
+      <button type="button" id="clearPinBtn">Забыть PIN</button>
     </section>
 
     <section class="panel hidden" id="adminPanel">
-      <h2>Manual run</h2>
+      <h2>Ручной заезд</h2>
       <form id="addRunForm">
-        <label>Run id <span class="hint">(leave empty for new UUID)</span>
-          <input type="text" name="id" placeholder="auto" maxlength="38" />
+        <label>ID заезда <span class="hint">(пусто = авто)</span>
+          <input type="text" name="id" placeholder="авто" maxlength="38" />
         </label>
-        <label>
-          Participant id (UUID or empty)
+        <label>ID участника (UUID или пусто)
           <input type="text" name="participant_id" maxlength="38" />
         </label>
-        <label>
-          Duration (µs)
+        <label>Длительность (мкс)
           <input type="number" name="duration_us" value="0" />
         </label>
-        <label>
-          Finished at (ISO UTC)
-          <input type="text" name="finished_at" placeholder="auto if empty" />
+        <label>Время финиша (ISO UTC)
+          <input type="text" name="finished_at" placeholder="авто если пусто" />
         </label>
         <label>
-          <input type="checkbox" name="claimed" /> Claimed
+          <input type="checkbox" name="claimed" /> Заявлен
         </label>
-        <label>Tournament match id (optional)
+        <label>ID матча турнира (опционально)
           <input type="text" name="tournament_match_id" maxlength="38" />
         </label>
-        <button type="submit">POST /api/admin/runs</button>
+        <button type="submit">Добавить заезд</button>
       </form>
 
-      <h2>Edit / delete run</h2>
+      <h2>Редактировать / удалить заезд</h2>
       <form id="patchRunForm">
-        <label>Run id
+        <label>ID заезда
           <input type="text" name="patch_id" maxlength="38" required />
         </label>
-        <textarea name="patch_json" rows="5" cols="72" spellcheck="false" placeholder='Partial JSON fields, e.g. {"participant_id":"","claimed":true}' ></textarea>
+        <textarea name="patch_json" rows="5" cols="72" spellcheck="false" placeholder='Частичный JSON, напр. {"participant_id":"","claimed":true}'></textarea>
         <button type="submit">PATCH</button>
       </form>
       <form id="deleteRunForm">
-        <label>Run id
+        <label>ID заезда
           <input type="text" name="delete_id" maxlength="38" required />
         </label>
-        <button type="submit" class="danger">DELETE</button>
+        <button type="submit" class="danger">Удалить</button>
       </form>
 
-      <h2>Data</h2>
-      <button type="button" id="resetBtn">Erase runs &amp; participants JSON</button>
+      <h2>Данные</h2>
+      <button type="button" id="resetBtn">Очистить все заезды и участников</button>
 
-      <h2>Export</h2>
+      <h2>Экспорт</h2>
       <form id="exportForm">
-        <label>Format</label>
+        <label>Формат</label>
         <select id="exportFmt">
           <option value="json">JSON</option>
           <option value="csv">CSV</option>
         </select>
-        <button type="submit">Download export</button>
+        <button type="submit">Скачать</button>
       </form>
 
-      <h2>LED strip</h2>
+      <h2>LED-лента</h2>
       <form id="settingsForm">
-        <label>
-          LED count (1–64)
-          <input type="number" name="ledCount" min="1" max="64" value="24" />
+        <label>Количество LED (1–64)
+          <input type="number" name="ledCount" min="1" max="64" id="ledCountInput" />
         </label>
-        <label>
-          Brightness (1–255)
-          <input type="number" name="brightness" min="1" max="255" value="80" />
+        <label>Яркость (1–255)
+          <input type="number" name="brightness" min="1" max="255" id="ledBrightnessInput" />
         </label>
-        <p class="hint">Device reboots after saving NVS settings.</p>
-        <button type="submit">Save &amp; restart</button>
+        <p class="hint">Устройство перезагрузится после сохранения.</p>
+        <button type="submit">Сохранить и перезагрузить</button>
       </form>
 
+      <h2>Турнир</h2>
+      <form id="tournamentCreateForm">
+        <label>Название турнира
+          <input type="text" id="torName" placeholder="Кубок CyBeer" required />
+        </label>
+        <p class="hint">Участники:</p>
+        <div class="participant-checkboxes" id="torParticipants"></div>
+        <button type="submit">Создать турнир</button>
+      </form>
+
+      <h3>Старт турнира</h3>
+      <form id="tournamentStartForm">
+        <label>Турнир
+          <select id="torSelect"><option value="">— загрузка —</option></select>
+        </label>
+        <button type="submit">Старт</button>
+      </form>
+
+      <h3>Назначить слот</h3>
+      <form id="tournamentAssignForm">
+        <label>ID матча
+          <input type="text" id="assignMatchId" maxlength="38" required />
+        </label>
+        <label>Слот
+          <select id="assignSlot">
+            <option value="A">A</option>
+            <option value="B">B</option>
+          </select>
+        </label>
+        <button type="submit">Привязать следующий заезд</button>
+      </form>
     </section>
   </main>
 
@@ -125,6 +148,8 @@
     #unlockPanel.hidden, #setupPanel.hidden { display: none !important; }
   </style>
 
+  <script>window.__CYBEER_PAGE__ = "admin";</script>
+  <script src="/app.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>
