@@ -996,9 +996,12 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
         if (!cJSON_IsTrue(jcl)) {
             continue;
         }
+        const cJSON *jdur = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
+        if (!cJSON_IsNumber(jdur) || jdur->valuedouble <= 0) {
+            continue;
+        }
         const cJSON *jid = cJSON_GetObjectItemCaseSensitive(item, "id");
         const cJSON *jpid = cJSON_GetObjectItemCaseSensitive(item, "participant_id");
-        const cJSON *jdur = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
         const cJSON *jfa = cJSON_GetObjectItemCaseSensitive(item, "finished_at");
         if (cJSON_IsString(jid) && jid->valuestring) {
             strncpy(r.id, jid->valuestring, sizeof(r.id) - 1);
