@@ -51,7 +51,116 @@ async function probeAdminPin() {
   }
 }
 
+async function loadWifiStatus() {
+  try {
+    const cfg = await fetchStatus();
+    const el = document.getElementById("wifiStatus");
+    if (!el || !cfg.wifi) return;
+
+    const w = cfg.wifi;
+    let html = "";
+    if (w.sta && w.ssid) {
+      html += '<p><strong>Сеть:</strong> ' + w.ssid + '</p>';
+      html += '<p><strong>IP:</strong> ' + (w.staIp || "—") + '</p>';
+      if (w.rssi) html += '<p><strong>Сигнал:</strong> ' + w.rssi + ' dBm</p>';
+    } else {
+      html += '<p>Не подключена к WiFi</p>';
+    }
+    if (w.apFallback) {
+      html += '<p class="hint" style="color:var(--amber)">Режим: Fallback AP</p>';
+    }
+    el.innerHTML = html;
+
+    const sec = document.getElementById("wifiSection");
+    if (sec && w.sta) sec.removeAttribute("open");
+  } catch (_) {}
+}
+
+function scanWifi() {
+  const btn = document.getElementById("wifiScanBtn");
+  const sel = document.getElementById("wifiSsidSelect");
+  const connectBtn = document.getElementById("wifiConnectBtn");
+  btn.disabled = true;
+  btn.textContent = "Сканирование...";
+  showMsg("");
+
+  fetch("/api/setup/scan")
+    .then(function (r) { return r.json(); })
+    .then(function (list) {
+      sel.innerHTML = "";
+      if (!Array.isArray(list) || list.length === 0) {
+        sel.innerHTML = '<option value="">(сети не найдены)</option>';
+        sel.disabled = true;
+        connectBtn.disabled = true;
+      } else {
+        for (var i = 0; i < list.length; i++) {
+          var o = document.createElement("option");
+          o.value = list[i].ssid;
+          o.textContent = list[i].ssid + " (" + list[i].rssi + " dBm, " + list[i].auth + ")";
+          sel.appendChild(o);
+        }
+        sel.disabled = false;
+        connectBtn.disabled = false;
+      }
+    })
+    .catch(function (e) {
+      showMsg("Ошибка сканирования: " + e, true);
+    })
+    .finally(function () {
+      btn.disabled = false;
+      btn.textContent = "Сканировать сети";
+    });
+}
+
+function connectWifi() {
+  var sel = document.getElementById("wifiSsidSelect");
+  var pass = document.getElementById("wifiPassInput");
+  var btn = document.getElementById("wifiConnectBtn");
+  var ssid = sel.value;
+  if (!ssid) { showMsg("Выберите сеть", true); return; }
+  btn.disabled = true;
+  showMsg("Подключение...");
+
+  fetch("/api/setup/wifi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ssid: ssid, password: pass.value })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j.ok) {
+        showMsg("Подключено! Устройство перезагружается...");
+      } else {
+        showMsg("Ошибка: " + (j.error || "неизвестная"), true);
+        btn.disabled = false;
+      }
+    })
+    .catch(function (e) {
+      showMsg("Ошибка: " + e, true);
+      btn.disabled = false;
+    });
+}
+
+function forgetWifi() {
+  if (!window.confirm("Забыть текущую WiFi сеть? Устройство перезагрузится в режим точки доступа.")) return;
+  showMsg("");
+  fetch("/api/admin/wifi/forget", { method: "POST", headers: pinHeaders() })
+    .then(function (r) {
+      if (r.ok) {
+        showMsg("Сеть забыта, устройство перезагружается...");
+      } else {
+        return r.text().then(function (t) { showMsg(t || "Ошибка", true); });
+      }
+    })
+    .catch(function (e) { showMsg("Ошибка: " + e, true); });
+}
+
+document.getElementById("wifiScanBtn").addEventListener("click", scanWifi);
+document.getElementById("wifiConnectBtn").addEventListener("click", connectWifi);
+document.getElementById("wifiForgetBtn").addEventListener("click", forgetWifi);
+
 function initAdminPanel() {
+  loadWifiStatus();
   prefillLedSettingsFromStatus();
   loadTournamentParticipants();
   loadTournamentsList();
