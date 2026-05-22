@@ -15,7 +15,7 @@
 
 static const char *TAG = "cybeer_ws";
 
-#define CYBEER_WS_MAX_CLIENTS 4
+#define CYBEER_WS_MAX_CLIENTS 10
 
 static httpd_handle_t s_hd;
 static SemaphoreHandle_t s_mu;
