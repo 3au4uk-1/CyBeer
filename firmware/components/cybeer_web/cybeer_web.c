@@ -24,6 +24,10 @@
 #include "freertos/task.h"
 #include <sys/stat.h>
 
+#ifndef PROJECT_VER
+#define PROJECT_VER "unknown"
+#endif
+
 static const char *TAG = "cybeer_web";
 
 #define WWW_ROOT "/littlefs/www"
@@ -91,7 +95,7 @@ static esp_err_t h_get_status(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "ledCount", (double)led_count);
     cJSON_AddNumberToObject(root, "ledBrightness", (double)led_bright);
     cJSON_AddBoolToObject(root, "adminPinConfigured", cybeer_nvs_admin_pin_is_configured());
-    cJSON_AddStringToObject(root, "firmwareVersion", "1.0.0");
+    cJSON_AddStringToObject(root, "firmwareVersion", PROJECT_VER);
     cJSON_AddStringToObject(root, "unclaimedRunId", unclaimed);
     cybeer_tournament_fill_status_active_match(root);
 
