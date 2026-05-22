@@ -28,8 +28,8 @@ static QueueHandle_t s_run_save_q;
 /** Persist run + WS/LED side effects off the display/FSM task (LittleFS writes block Wi-Fi). */
 static void persist_finished_run(int64_t duration_us)
 {
-    /* Let LED flash / state WS drain before flash write + runFinished burst. */
-    vTaskDelay(pdMS_TO_TICKS(120));
+    /* Finish path runs off display_task; yield so Wi-Fi/httpd get CPU before flash I/O. */
+    vTaskDelay(pdMS_TO_TICKS(80));
 
     cybeer_run_t run = { 0 };
     cybeer_format_uuid_v4(run.id);
@@ -45,9 +45,16 @@ static void persist_finished_run(int64_t duration_us)
         return;
     }
     ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
+
+    taskYIELD();
+    vTaskDelay(pdMS_TO_TICKS(10));
     (void)cybeer_tournament_notify_run_saved(&run);
+
+    taskYIELD();
     cybeer_ws_on_run_finished(run.id, run.duration_us);
-    cybeer_led_set_unclaimed_flag(true);
+    if (cybeer_led_strip_active()) {
+        cybeer_led_set_unclaimed_flag(true);
+    }
 }
 
 static void run_save_task(void *pvParameters)
@@ -135,31 +142,32 @@ static void display_task(void *pvParameters)
             break;
         }
 
-        cybeer_led_fx_t led_fx = CYBEER_LED_FX_AMBIENT;
-        switch (snap.state) {
-        case CYBEER_STATE_PREP:
-            led_fx = CYBEER_LED_FX_ARMED;
-            break;
-        case CYBEER_STATE_RUNNING:
-            led_fx = CYBEER_LED_FX_RUNNING;
-            break;
-        case CYBEER_STATE_READY:
-            led_fx = CYBEER_LED_FX_AMBIENT;
-            break;
-        case CYBEER_STATE_FINISHED:
-            if (fsm_prev != CYBEER_STATE_FINISHED) {
-                cybeer_led_set_fx(CYBEER_LED_FX_FINISHED);
+        if (cybeer_led_strip_active()) {
+            cybeer_led_fx_t led_fx = CYBEER_LED_FX_AMBIENT;
+            switch (snap.state) {
+            case CYBEER_STATE_PREP:
+                led_fx = CYBEER_LED_FX_ARMED;
+                break;
+            case CYBEER_STATE_RUNNING:
+                led_fx = CYBEER_LED_FX_RUNNING;
+                break;
+            case CYBEER_STATE_READY:
+                led_fx = CYBEER_LED_FX_AMBIENT;
+                break;
+            case CYBEER_STATE_FINISHED:
+                if (fsm_prev != CYBEER_STATE_FINISHED) {
+                    cybeer_led_set_fx(CYBEER_LED_FX_FINISHED);
+                }
+                break;
+            default:
+                break;
             }
-            break;
-        default:
-            break;
-        }
-        if (snap.state != CYBEER_STATE_FINISHED) {
-            cybeer_led_set_fx(led_fx);
+            if (snap.state != CYBEER_STATE_FINISHED) {
+                cybeer_led_set_fx(led_fx);
+            }
+            cybeer_led_task_tick(now);
         }
         fsm_prev = snap.state;
-
-        cybeer_led_task_tick(now);
 
         const uint32_t loop_ms = (snap.state == CYBEER_STATE_RUNNING) ? 33 : 25;
         vTaskDelay(pdMS_TO_TICKS(loop_ms));

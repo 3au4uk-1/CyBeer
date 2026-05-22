@@ -13,6 +13,7 @@
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #define CY_ROOT "/littlefs"
 #define CY_DATA CY_ROOT "/data"
@@ -199,7 +200,9 @@ static esp_err_t persist_json_locked(const char *path, cJSON *root)
     if (!printed) {
         return ESP_ERR_NO_MEM;
     }
+    taskYIELD();
     esp_err_t err = write_full_locked(path, printed);
+    taskYIELD();
     free(printed);
     return err;
 }

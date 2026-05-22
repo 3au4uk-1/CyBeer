@@ -78,6 +78,9 @@ static void rgb_scale(uint32_t br, uint8_t r, uint8_t g, uint8_t b, uint32_t *ou
 }
 static esp_err_t draw_all(uint32_t r, uint32_t g, uint32_t b)
 {
+    if (!s_strip || s_led_count == 0) {
+        return ESP_OK;
+    }
     esp_err_t e = ESP_OK;
     for (uint32_t i = 0; i < (uint32_t)s_led_count; i++) {
         e = led_strip_set_pixel(s_strip, i, r, g, b);
@@ -110,6 +113,9 @@ static esp_err_t render_claim_pending(int64_t now_us)
 }
 static esp_err_t render_frame(int64_t now_us)
 {
+    if (!s_strip || s_led_count == 0) {
+        return ESP_OK;
+    }
     cybeer_led_fx_t rq = s_fx_requested;
     if (s_fx_requested == CYBEER_LED_FX_PODIUM && now_us >= s_podium_until_us) {
         s_fx_requested = CYBEER_LED_FX_AMBIENT;
@@ -214,6 +220,11 @@ void cybeer_led_init(void)
     load_led_settings();
     ESP_LOGI(TAG, "LED strip count=%u brightness=%u (max %u)", (unsigned)s_led_count,
              (unsigned)s_led_brightness_base, (unsigned)CYBEER_LED_COUNT_MAX);
+    if (s_led_count == 0) {
+        s_strip = NULL;
+        ESP_LOGI(TAG, "LED strip disabled (count=0), no RMT on GPIO%u", (unsigned)CYBEER_GPIO_LED_DATA);
+        return;
+    }
     led_strip_config_t strip_config = {
         .strip_gpio_num = CYBEER_GPIO_LED_DATA,
         .max_leds = CYBEER_LED_COUNT_MAX,
@@ -230,6 +241,12 @@ void cybeer_led_init(void)
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip));
     ESP_LOGI(TAG, "WS2812 on GPIO%u (RMT)", (unsigned)CYBEER_GPIO_LED_DATA);
 }
+
+bool cybeer_led_strip_active(void)
+{
+    return s_strip != NULL && s_led_count > 0;
+}
+
 static void apply_fx_immediate(cybeer_led_fx_t fx)
 {
     if (fx == s_fx_requested) {
