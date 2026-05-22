@@ -19,6 +19,7 @@ static uint8_t s_led_brightness_base = CYBEER_LED_BRIGHTNESS_DEFAULT;
 static cybeer_led_fx_t s_fx_requested = CYBEER_LED_FX_AMBIENT;
 static int64_t s_finished_enter_us;
 static int64_t s_podium_until_us;
+static bool s_has_unclaimed_run;
 static void load_led_settings(void)
 {
     uint8_t c = CYBEER_LED_COUNT_DEFAULT;
@@ -116,9 +117,7 @@ static esp_err_t render_frame(int64_t now_us)
         if (dt < dim_until) {
             return draw_all(38, 40, 42);
         }
-        char unclaimed[40];
-        if (cybeer_storage_get_latest_unclaimed_run_id(unclaimed, sizeof(unclaimed)) == ESP_OK
-            && unclaimed[0] != '\0') {
+        if (s_has_unclaimed_run) {
             return render_claim_pending(now_us);
         }
         return render_ambient(now_us);
@@ -225,9 +224,13 @@ void cybeer_led_set_fx(cybeer_led_fx_t fx)
         s_finished_enter_us = now;
     }
     if (fx == CYBEER_LED_FX_PODIUM) {
-        s_podium_until_us = now + (int64_t)3000000;
+        s_podium_until_us = now + (int64_t)6000000;
     }
     s_fx_requested = fx;
+}
+void cybeer_led_set_unclaimed_flag(bool has_unclaimed)
+{
+    s_has_unclaimed_run = has_unclaimed;
 }
 void cybeer_led_task_tick(int64_t now_us)
 {

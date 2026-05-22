@@ -37,6 +37,7 @@ static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
         ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
         (void)cybeer_tournament_notify_run_saved(&run);
         cybeer_ws_on_run_finished(run.id, run.duration_us);
+        cybeer_led_set_unclaimed_flag(true);
     }
 }
 

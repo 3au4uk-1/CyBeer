@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef enum {
@@ -14,4 +15,5 @@ typedef enum {
 
 void cybeer_led_init(void);
 void cybeer_led_set_fx(cybeer_led_fx_t fx);
+void cybeer_led_set_unclaimed_flag(bool has_unclaimed);
 void cybeer_led_task_tick(int64_t now_us);

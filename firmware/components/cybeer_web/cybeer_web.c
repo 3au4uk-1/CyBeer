@@ -290,6 +290,7 @@ static esp_err_t h_post_claim(httpd_req_t *req)
         }
         (void)cybeer_tournament_notify_run_claimed(run_id);
         cybeer_ws_broadcast_leaderboard_update();
+        cybeer_led_set_unclaimed_flag(false);
         return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
     }
     if (err == ESP_ERR_NOT_FOUND) {
@@ -544,6 +545,7 @@ static esp_err_t h_delete_admin_data_reset(httpd_req_t *req)
     if (err != ESP_OK) {
         return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
     }
+    cybeer_led_set_unclaimed_flag(false);
     return send_json_text(req, "200 OK", "{\"ok\":true}");
 }
 
