@@ -157,9 +157,23 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 
     if (id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "SoftAP started, SSID \"%s\", open, 192.168.4.1", s_ap_ssid[0] ? s_ap_ssid : "?");
+    } else if (id == WIFI_EVENT_AP_STACONNECTED) {
+        const wifi_event_ap_staconnected_t *ev = (const wifi_event_ap_staconnected_t *)data;
+        if (ev) {
+            ESP_LOGI(TAG, "AP client joined aid=%u", (unsigned)ev->aid);
+        }
+    } else if (id == WIFI_EVENT_AP_STADISCONNECTED) {
+        const wifi_event_ap_stadisconnected_t *ev = (const wifi_event_ap_stadisconnected_t *)data;
+        if (ev) {
+            ESP_LOGW(TAG, "AP client left aid=%u reason=%d", (unsigned)ev->aid, ev->reason);
+        }
     } else if (id == WIFI_EVENT_STA_START) {
         (void)esp_wifi_connect();
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *ev = (const wifi_event_sta_disconnected_t *)data;
+        if (ev) {
+            ESP_LOGW(TAG, "STA disconnected reason=%d", ev->reason);
+        }
         s_sta_has_ip = false;
         s_sta_ip_str[0] = '\0';
         if (s_sta_netif != NULL) {
@@ -240,6 +254,16 @@ static const char *auth_mode_str(wifi_auth_mode_t mode)
 
 static esp_err_t h_get_scan(httpd_req_t *req)
 {
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_STA) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+    }
+
+    /*
+     * Active scan blocks the Wi-Fi driver; connected SoftAP clients may drop.
+     * AP-only provisioning still needs scan — clients usually re-join after.
+     */
     wifi_scan_config_t scan_cfg = {
         .show_hidden = false,
         .scan_type = WIFI_SCAN_TYPE_PASSIVE,
@@ -573,7 +597,8 @@ esp_err_t cybeer_wifi_start(void)
     strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
     ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
     ap_cfg.ap.channel = 1;
-    ap_cfg.ap.max_connection = 4;
+    ap_cfg.ap.max_connection = 10;
+    ap_cfg.ap.beacon_interval = 100;
     ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
     ap_cfg.ap.password[0] = '\0';
 
@@ -603,6 +628,8 @@ esp_err_t cybeer_wifi_start(void)
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "wifi_ps_none");
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi_start");
+    /* Keep phones on SoftAP during long runs (default idle timeout can drop clients). */
+    (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
 
     ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24 (open)", s_ap_ssid);
     if (have_sta) {

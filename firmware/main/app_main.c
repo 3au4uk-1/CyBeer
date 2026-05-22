@@ -12,16 +12,22 @@
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
 
 static const char *TAG = "cybeer";
 
-static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
-{
-    (void)user_ctx;
+typedef struct {
+    int64_t duration_us;
+} run_save_msg_t;
 
+static QueueHandle_t s_run_save_q;
+
+/** Persist run + WS/LED side effects off the display/FSM task (LittleFS writes block Wi-Fi). */
+static void persist_finished_run(int64_t duration_us)
+{
     cybeer_run_t run = { 0 };
     cybeer_format_uuid_v4(run.id);
     run.participant_id[0] = '\0';
@@ -33,11 +39,39 @@ static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
     esp_err_t err = cybeer_storage_add_run(&run);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "storage_add_run failed: %s", esp_err_to_name(err));
-    } else {
-        ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
-        (void)cybeer_tournament_notify_run_saved(&run);
-        cybeer_ws_on_run_finished(run.id, run.duration_us);
-        cybeer_led_set_unclaimed_flag(true);
+        return;
+    }
+    ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
+    (void)cybeer_tournament_notify_run_saved(&run);
+    cybeer_ws_on_run_finished(run.id, run.duration_us);
+    cybeer_led_set_unclaimed_flag(true);
+}
+
+static void run_save_task(void *pvParameters)
+{
+    (void)pvParameters;
+    run_save_msg_t msg;
+
+    for (;;) {
+        if (xQueueReceive(s_run_save_q, &msg, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        persist_finished_run(msg.duration_us);
+    }
+}
+
+static void on_finished_placeholder(int64_t duration_us, void *user_ctx)
+{
+    (void)user_ctx;
+    if (s_run_save_q == NULL) {
+        persist_finished_run(duration_us);
+        return;
+    }
+
+    const run_save_msg_t msg = { .duration_us = duration_us };
+    if (xQueueSend(s_run_save_q, &msg, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "run save queue full, persisting inline");
+        persist_finished_run(duration_us);
     }
 }
 
@@ -119,6 +153,19 @@ void app_main(void)
     ESP_ERROR_CHECK(cybeer_storage_init());
     ESP_ERROR_CHECK(cybeer_battery_init());
     ESP_LOGI(TAG, "CyBeer boot");
+
+    s_run_save_q = xQueueCreate(2, sizeof(run_save_msg_t));
+    if (s_run_save_q != NULL) {
+        const BaseType_t save_ok =
+            xTaskCreate(run_save_task, "run_save", 6144, NULL, tskIDLE_PRIORITY + 2, NULL);
+        if (save_ok != pdPASS) {
+            ESP_LOGW(TAG, "run_save task create failed, saves run on display task");
+            vQueueDelete(s_run_save_q);
+            s_run_save_q = NULL;
+        }
+    } else {
+        ESP_LOGW(TAG, "run save queue create failed");
+    }
 
     cybeer_switch_init();
     cybeer_display_init();

@@ -333,7 +333,7 @@ void cybeer_ws_timer_tick(int64_t now_us)
         s_last_timer_send_us = 0;
         return;
     }
-    const int64_t period_us = 1000000 / 20;
+    const int64_t period_us = 100000; /* 10 Hz — lower httpd load while RUNNING */
     if (s_last_timer_send_us != 0 && (now_us - s_last_timer_send_us) < period_us) {
         return;
     }

@@ -243,12 +243,15 @@
     let ws;
     let reconnectTimer;
 
+    let reconnectDelayMs = 2000;
+
     function scheduleReconnect() {
       if (reconnectTimer) return;
       reconnectTimer = window.setTimeout(function () {
         reconnectTimer = null;
         connectLiveWs();
-      }, 2000);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
+      }, reconnectDelayMs);
     }
 
     try {
@@ -259,6 +262,7 @@
     }
 
     ws.onopen = function () {
+      reconnectDelayMs = 2000;
       try {
         ws.send(".");
       } catch (_) {}
