@@ -17,9 +17,10 @@
 #include <strings.h>
 
 #include "cJSON.h"
+#include "esp_check.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_restart.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <sys/stat.h>
@@ -97,6 +98,13 @@ static esp_err_t h_get_status(httpd_req_t *req)
     cJSON_AddBoolToObject(root, "adminPinConfigured", cybeer_nvs_admin_pin_is_configured());
     cJSON_AddStringToObject(root, "firmwareVersion", PROJECT_VER);
     cJSON_AddStringToObject(root, "unclaimedRunId", unclaimed);
+    if (unclaimed[0] != '\0') {
+        cybeer_run_t unclaimed_run;
+        if (cybeer_storage_get_run(unclaimed, &unclaimed_run) == ESP_OK) {
+            cJSON_AddNumberToObject(root, "unclaimedRunDurationUs",
+                                    (double)unclaimed_run.duration_us);
+        }
+    }
     cybeer_tournament_fill_status_active_match(root);
 
     return json_send(req, root);
@@ -347,6 +355,96 @@ static esp_err_t require_admin_pin(httpd_req_t *req)
         return send_json_text(req, "401 Unauthorized", "{\"error\":\"invalid pin\"}");
     }
     return ESP_OK;
+}
+
+static esp_err_t h_get_participant_runs(httpd_req_t *req)
+{
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+
+    const char *pfx = "/api/participants/";
+    if (strncmp(path, pfx, strlen(pfx)) != 0) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+    const char *rest = path + strlen(pfx);
+    const char *suf = strstr(rest, "/runs");
+    if (!suf || strcmp(suf, "/runs") != 0) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+    size_t id_len = (size_t)(suf - rest);
+    if (id_len == 0 || id_len >= 40) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"id\"}");
+    }
+    char pid[40];
+    memcpy(pid, rest, id_len);
+    pid[id_len] = '\0';
+    if (strchr(pid, '/') != NULL) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"id\"}");
+    }
+
+    const char *raw = cybeer_storage_runs_json();
+    cJSON *arr = cJSON_Parse(raw && raw[0] ? raw : "[]");
+    if (!arr || !cJSON_IsArray(arr)) {
+        if (arr) {
+            cJSON_Delete(arr);
+        }
+        cJSON *empty = cJSON_CreateArray();
+        return json_send(req, empty);
+    }
+
+    int n = cJSON_GetArraySize(arr);
+    int start = n > 50 ? n - 50 : 0;
+    cJSON *out = cJSON_CreateArray();
+    if (!out) {
+        cJSON_Delete(arr);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
+    }
+    for (int i = n - 1; i >= start; i--) {
+        const cJSON *item = cJSON_GetArrayItem(arr, i);
+        if (!item) {
+            continue;
+        }
+        const cJSON *jpid = cJSON_GetObjectItemCaseSensitive(item, "participant_id");
+        if (!cJSON_IsString(jpid) || !jpid->valuestring) {
+            continue;
+        }
+        if (strcmp(jpid->valuestring, pid) != 0) {
+            continue;
+        }
+        cJSON *cpy = cJSON_Duplicate((cJSON *)item, true);
+        if (cpy) {
+            cJSON_AddItemToArray(out, cpy);
+        }
+    }
+    cJSON_Delete(arr);
+    return json_send(req, out);
+}
+
+static esp_err_t h_post_admin_pin_verify(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    return send_json_text(req, "200 OK", "{\"ok\":true}");
+}
+
+static esp_err_t h_get_admin_tournaments(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    const char *raw = cybeer_storage_tournaments_json();
+    cJSON *root = cJSON_Parse(raw && raw[0] ? raw : "[]");
+    if (!root) {
+        root = cJSON_CreateArray();
+    }
+    if (!cJSON_IsArray(root)) {
+        cJSON_Delete(root);
+        root = cJSON_CreateArray();
+    }
+    return json_send(req, root);
 }
 
 static bool admin_parse_run_id(const char *path_no_query, char id_out[40])
@@ -1084,7 +1182,11 @@ esp_err_t cybeer_web_start(void)
     cfg.server_port = 80;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
-    esp_err_t err = httpd_start(&cfg, &s_server);
+    /* Default max_uri_handlers is 8; we register 20+ routes (API + setup + OTA + WS + static). */
+    cfg.max_uri_handlers = 32;
+    /* Default stack_size is 4096; several handlers use ADMIN_BODY_MAX (4096) on stack. */
+    cfg.stack_size = 10240;
+    esp_err_t err = httpd_start(&s_server, &cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
         return err;
@@ -1106,9 +1208,21 @@ esp_err_t cybeer_web_start(void)
         .handler = h_get_participant_stats,
         .user_ctx = NULL
     };
+    httpd_uri_t u_part_runs = {
+        .uri = "/api/participants/*/runs",
+        .method = HTTP_GET,
+        .handler = h_get_participant_runs,
+        .user_ctx = NULL
+    };
     httpd_uri_t u_claim = { .uri = "/api/runs/*/claim", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL };
     httpd_uri_t u_admin_pin = {
         .uri = "/api/admin/pin/setup", .method = HTTP_POST, .handler = h_post_admin_pin_setup, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_pin_verify = {
+        .uri = "/api/admin/pin/verify",
+        .method = HTTP_POST,
+        .handler = h_post_admin_pin_verify,
+        .user_ctx = NULL
     };
     httpd_uri_t u_admin_runs = {
         .uri = "/api/admin/runs", .method = HTTP_POST, .handler = h_post_admin_runs, .user_ctx = NULL
@@ -1152,6 +1266,12 @@ esp_err_t cybeer_web_start(void)
         .handler = h_post_admin_tournaments_create,
         .user_ctx = NULL
     };
+    httpd_uri_t u_admin_tournaments_list = {
+        .uri = "/api/admin/tournaments",
+        .method = HTTP_GET,
+        .handler = h_get_admin_tournaments,
+        .user_ctx = NULL
+    };
 
     httpd_uri_t u_static = { .uri = "/*", .method = HTTP_GET, .handler = h_static, .user_ctx = NULL };
 
@@ -1159,11 +1279,14 @@ esp_err_t cybeer_web_start(void)
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_leaderboard) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_stats) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_part_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_active_pub) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_assign) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_start) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_create) != ESP_OK || httpd_register_uri_handler(s_server, &u_admin_pin) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_pin_verify) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_tournaments_list) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_run_patch) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_run_del) != ESP_OK
