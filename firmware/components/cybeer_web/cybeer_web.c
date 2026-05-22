@@ -345,7 +345,7 @@ static esp_err_t require_admin_pin(httpd_req_t *req)
 {
     if (!cybeer_nvs_admin_pin_is_configured()) {
         return send_json_text(req, "403 Forbidden",
-                              "{\"error\":\"admin pin not configured; use POST /api/admin/pin/setup\"}");
+                              "{\"error\":\"admin pin not configured; default is 1111\"}");
     }
     char pin_raw[96];
     if (httpd_req_get_hdr_value_str(req, ADMIN_HDR_PIN, pin_raw, sizeof(pin_raw)) != ESP_OK) {
@@ -427,6 +427,47 @@ static esp_err_t h_post_admin_pin_verify(httpd_req_t *req)
         return g;
     }
     return send_json_text(req, "200 OK", "{\"ok\":true}");
+}
+
+static esp_err_t h_post_admin_pin_change(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    char body[ADMIN_BODY_MAX];
+    if (read_http_body(req, body, sizeof(body)) != ESP_OK) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json\"}");
+    }
+    const cJSON *jnew = cJSON_GetObjectItemCaseSensitive(root, "newPin");
+    const char *new_pin = (cJSON_IsString(jnew) && jnew->valuestring) ? jnew->valuestring : NULL;
+    cJSON_Delete(root);
+    if (!new_pin || strlen(new_pin) < 4 || strlen(new_pin) > 32) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"newPin length 4-32\"}");
+    }
+
+    char pin_raw[96];
+    if (httpd_req_get_hdr_value_str(req, ADMIN_HDR_PIN, pin_raw, sizeof(pin_raw)) != ESP_OK) {
+        return send_json_text(req, "401 Unauthorized", "{\"error\":\"missing pin header\"}");
+    }
+    if (cybeer_admin_pin_change(pin_raw, new_pin) != ESP_OK) {
+        return send_json_text(req, "401 Unauthorized", "{\"error\":\"invalid pin\"}");
+    }
+    return send_json_text(req, "200 OK", "{\"ok\":true}");
+}
+
+static esp_err_t h_post_admin_pin_reset_default(httpd_req_t *req)
+{
+    (void)req;
+    if (cybeer_admin_pin_reset_to_default() != ESP_OK) {
+        return send_json_text(req, "500 Internal Server Error", "{\"error\":\"nvs\"}");
+    }
+    ESP_LOGW(TAG, "admin PIN reset to factory default");
+    return send_json_text(req, "200 OK", "{\"ok\":true,\"pin\":\"1111\"}");
 }
 
 static esp_err_t h_get_admin_tournaments(httpd_req_t *req)
@@ -1224,6 +1265,18 @@ esp_err_t cybeer_web_start(void)
         .handler = h_post_admin_pin_verify,
         .user_ctx = NULL
     };
+    httpd_uri_t u_admin_pin_change = {
+        .uri = "/api/admin/pin/change",
+        .method = HTTP_POST,
+        .handler = h_post_admin_pin_change,
+        .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_pin_reset_default = {
+        .uri = "/api/admin/pin/reset-default",
+        .method = HTTP_POST,
+        .handler = h_post_admin_pin_reset_default,
+        .user_ctx = NULL
+    };
     httpd_uri_t u_admin_runs = {
         .uri = "/api/admin/runs", .method = HTTP_POST, .handler = h_post_admin_runs, .user_ctx = NULL
     };
@@ -1286,6 +1339,8 @@ esp_err_t cybeer_web_start(void)
         || httpd_register_uri_handler(s_server, &u_tor_start) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_create) != ESP_OK || httpd_register_uri_handler(s_server, &u_admin_pin) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_pin_verify) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_pin_change) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_pin_reset_default) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_tournaments_list) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_admin_run_patch) != ESP_OK

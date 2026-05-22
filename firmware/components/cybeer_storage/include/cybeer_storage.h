@@ -45,8 +45,19 @@ esp_err_t cybeer_nvs_set_admin_pin_hash(const uint8_t hash[CYBEER_ADMIN_PIN_HASH
 esp_err_t cybeer_nvs_get_admin_pin_salt(uint8_t salt_out[CYBEER_ADMIN_PIN_SALT_LEN]);
 /** True when `admin_pin_hash` exists (first-time PIN setup applies before this). */
 bool cybeer_nvs_admin_pin_is_configured(void);
+/** Default factory admin PIN (NVS is seeded on first boot if empty). */
+#define CYBEER_ADMIN_DEFAULT_PIN "1111"
+
 /** Saves random salt + SHA256(salt||pin); fails with ESP_ERR_INVALID_STATE if PIN already configured. */
 esp_err_t cybeer_admin_pin_first_setup(const char *pin);
+/** Overwrite stored PIN hash (setup or change). */
+esp_err_t cybeer_admin_pin_set(const char *pin);
+/** Verify current PIN, then store new PIN. */
+esp_err_t cybeer_admin_pin_change(const char *current_pin, const char *new_pin);
+/** If no PIN in NVS, configure CYBEER_ADMIN_DEFAULT_PIN. */
+void cybeer_admin_ensure_default_pin(void);
+/** Force PIN to CYBEER_ADMIN_DEFAULT_PIN (recovery). */
+esp_err_t cybeer_admin_pin_reset_to_default(void);
 esp_err_t cybeer_admin_verify_pin(const char *pin);
 
 /** RFC 4122 UUID v4 (uses esp_fill_random). */

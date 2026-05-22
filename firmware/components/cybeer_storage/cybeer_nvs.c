@@ -248,12 +248,18 @@ static bool buf_eq_ct(const uint8_t *a, const uint8_t *b, size_t n)
     return d == 0;
 }
 
-esp_err_t cybeer_admin_pin_first_setup(const char *pin)
+static bool pin_length_ok(const char *pin)
 {
-    ESP_RETURN_ON_FALSE(pin && pin[0], ESP_ERR_INVALID_ARG, TAG, "pin");
-    if (cybeer_nvs_admin_pin_is_configured()) {
-        return ESP_ERR_INVALID_STATE;
+    if (!pin || pin[0] == '\0') {
+        return false;
     }
+    size_t n = strlen(pin);
+    return n >= 4 && n <= 32;
+}
+
+esp_err_t cybeer_admin_pin_set(const char *pin)
+{
+    ESP_RETURN_ON_FALSE(pin_length_ok(pin), ESP_ERR_INVALID_ARG, TAG, "pin len");
 
     uint8_t salt[CYBEER_ADMIN_PIN_SALT_LEN];
     esp_fill_random(salt, sizeof(salt));
@@ -275,6 +281,43 @@ esp_err_t cybeer_admin_pin_first_setup(const char *pin)
     }
     nvs_close(h);
     return err;
+}
+
+esp_err_t cybeer_admin_pin_first_setup(const char *pin)
+{
+    ESP_RETURN_ON_FALSE(pin_length_ok(pin), ESP_ERR_INVALID_ARG, TAG, "pin");
+    if (cybeer_nvs_admin_pin_is_configured()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return cybeer_admin_pin_set(pin);
+}
+
+esp_err_t cybeer_admin_pin_change(const char *current_pin, const char *new_pin)
+{
+    ESP_RETURN_ON_FALSE(pin_length_ok(current_pin) && pin_length_ok(new_pin), ESP_ERR_INVALID_ARG, TAG,
+                        "pin len");
+    if (cybeer_admin_verify_pin(current_pin) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    return cybeer_admin_pin_set(new_pin);
+}
+
+void cybeer_admin_ensure_default_pin(void)
+{
+    if (cybeer_nvs_admin_pin_is_configured()) {
+        return;
+    }
+    esp_err_t err = cybeer_admin_pin_set(CYBEER_ADMIN_DEFAULT_PIN);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "admin PIN set to factory default");
+    } else {
+        ESP_LOGW(TAG, "admin default PIN init failed: %s", esp_err_to_name(err));
+    }
+}
+
+esp_err_t cybeer_admin_pin_reset_to_default(void)
+{
+    return cybeer_admin_pin_set(CYBEER_ADMIN_DEFAULT_PIN);
 }
 
 esp_err_t cybeer_admin_verify_pin(const char *pin)

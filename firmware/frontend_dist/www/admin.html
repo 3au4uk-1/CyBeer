@@ -17,32 +17,17 @@
 
   <main>
     <p id="adminMsg" class="msg" aria-live="polite"></p>
-    <section class="panel" id="setupPanel">
-      <h2>Первая настройка PIN</h2>
-      <p class="hint">SHA-256 хеш с солью хранится на устройстве.</p>
-      <form id="setupPinForm">
-        <label>
-          Новый PIN
-          <input type="password" name="pin1" autocomplete="new-password" minlength="4" maxlength="32" required />
-        </label>
-        <button type="submit">Сохранить PIN</button>
-      </form>
-    </section>
 
-    <section class="panel" id="unlockPanel">
-      <h2>Вход в админку</h2>
-      <p class="hint">PIN сохраняется в сессии этой вкладки.</p>
-      <form id="unlockForm">
-        <label>
-          PIN
-          <input type="password" id="unlockPin" minlength="4" maxlength="32" autocomplete="off" />
+    <section class="panel" id="adminPanel">
+      <h2>PIN админки</h2>
+      <p class="hint">На устройстве по умолчанию <strong>1111</strong>. PIN хранится в браузере и отправляется с каждым запросом.</p>
+      <form id="changePinForm">
+        <label>Новый PIN (4–32 символа)
+          <input type="password" id="newPinInput" minlength="4" maxlength="32" autocomplete="new-password" required />
         </label>
-        <button type="submit">Запомнить PIN</button>
+        <button type="submit">Сменить PIN на устройстве</button>
       </form>
-      <button type="button" id="clearPinBtn">Забыть PIN</button>
-    </section>
-
-    <section class="panel hidden" id="adminPanel">
+      <button type="button" id="resetPinBtn" class="danger">Сбросить PIN на устройстве → 1111</button>
       <h2>Ручной заезд</h2>
       <form id="addRunForm">
         <label>ID заезда <span class="hint">(пусто = авто)</span>
@@ -141,11 +126,9 @@
   </main>
 
   <style>
-    #clearPinBtn { margin-top: 0.5rem; background: transparent; border: 1px solid var(--muted); color: var(--muted); }
+    #resetPinBtn { margin-top: 0.5rem; }
     textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem; }
     button.danger { border-color: var(--danger); color: var(--danger); }
-    .panel.hidden { display: none !important; }
-    #unlockPanel.hidden, #setupPanel.hidden { display: none !important; }
   </style>
 
   <script>window.__CYBEER_PAGE__ = "admin";</script>

@@ -156,6 +156,8 @@ esp_err_t cybeer_storage_init(void)
     give_mtx();
     ESP_RETURN_ON_ERROR(err, TAG, "layout");
 
+    cybeer_admin_ensure_default_pin();
+
     return ESP_OK;
 }
 

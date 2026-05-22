@@ -1,8 +1,16 @@
-const PIN_SESSION_KEY = "cybeer_admin_pin";
+const PIN_STORAGE_KEY = "cybeer_admin_pin";
+const DEFAULT_PIN = "1111";
+
+function getAdminPin() {
+  return localStorage.getItem(PIN_STORAGE_KEY) || DEFAULT_PIN;
+}
+
+function setAdminPin(pin) {
+  localStorage.setItem(PIN_STORAGE_KEY, pin);
+}
 
 function pinHeaders() {
-  const p = sessionStorage.getItem(PIN_SESSION_KEY);
-  return p ? { "X-Admin-Pin": p } : {};
+  return { "X-Admin-Pin": getAdminPin() };
 }
 
 function combineHeaders(extra) {
@@ -23,31 +31,37 @@ async function fetchStatus() {
   return res.json();
 }
 
-function applyVisibility(cfg) {
-  const setup = document.getElementById("setupPanel");
-  const unlock = document.getElementById("unlockPanel");
-  const admin = document.getElementById("adminPanel");
-  const hasPinStored = !!sessionStorage.getItem(PIN_SESSION_KEY);
-  const pinConfigured = !!cfg.adminPinConfigured;
-
-  if (!pinConfigured) {
-    setup.classList.remove("hidden");
-    unlock.classList.add("hidden");
-    admin.classList.add("hidden");
-    return;
+async function probeAdminPin() {
+  try {
+    const res = await fetch("/api/admin/pin/verify", {
+      method: "POST",
+      headers: pinHeaders(),
+    });
+    if (!res.ok) {
+      showMsg(
+        "PIN в браузере не совпадает с устройством. Нажмите «Сбросить PIN → 1111» или смените PIN.",
+        true
+      );
+      return false;
+    }
+    return true;
+  } catch (e) {
+    showMsg(String(e.message || e), true);
+    return false;
   }
-  setup.classList.add("hidden");
-  if (!hasPinStored) {
-    unlock.classList.remove("hidden");
-    admin.classList.add("hidden");
-    return;
-  }
-  unlock.classList.add("hidden");
-  admin.classList.remove("hidden");
+}
 
-  prefillLedSettings(cfg);
+function initAdminPanel() {
+  prefillLedSettingsFromStatus();
   loadTournamentParticipants();
   loadTournamentsList();
+}
+
+async function prefillLedSettingsFromStatus() {
+  try {
+    const cfg = await fetchStatus();
+    prefillLedSettings(cfg);
+  } catch (_) {}
 }
 
 function prefillLedSettings(cfg) {
@@ -81,6 +95,7 @@ async function loadTournamentParticipants() {
 async function loadTournamentsList() {
   try {
     const r = await fetch("/api/admin/tournaments", { headers: pinHeaders() });
+    if (!r.ok) return;
     const data = await r.json();
     const sel = document.getElementById("torSelect");
     if (!sel || !Array.isArray(data)) return;
@@ -95,58 +110,48 @@ async function loadTournamentsList() {
   } catch (_) {}
 }
 
-document.getElementById("setupPinForm").addEventListener("submit", async (ev) => {
+document.getElementById("changePinForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const fd = new FormData(ev.target);
-  const pin = String(fd.get("pin1") || "").trim();
   showMsg("");
+  const newPin = String(document.getElementById("newPinInput").value || "").trim();
+  if (newPin.length < 4) {
+    showMsg("Новый PIN слишком короткий", true);
+    return;
+  }
   try {
-    const res = await fetch("/api/admin/pin/setup", {
+    const res = await fetch("/api/admin/pin/change", {
       method: "POST",
       headers: combineHeaders({}),
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({ newPin: newPin }),
     });
+    if (!res.ok) {
+      showMsg("Не удалось сменить PIN (проверьте текущий PIN в браузере)", true);
+      return;
+    }
+    setAdminPin(newPin);
+    document.getElementById("newPinInput").value = "";
+    showMsg("PIN на устройстве изменён.");
+  } catch (e) {
+    showMsg(String(e.message || e), true);
+  }
+});
+
+document.getElementById("resetPinBtn").addEventListener("click", async () => {
+  if (!window.confirm("Сбросить PIN на устройстве на 1111?")) return;
+  showMsg("");
+  try {
+    const res = await fetch("/api/admin/pin/reset-default", { method: "POST" });
     if (!res.ok) {
       showMsg(await res.text(), true);
       return;
     }
-    showMsg("PIN сохранён. Перезагрузка.");
-    sessionStorage.removeItem(PIN_SESSION_KEY);
-    await fetchStatus().then(applyVisibility);
+    setAdminPin(DEFAULT_PIN);
+    showMsg("PIN на устройстве сброшен на 1111.");
+    await probeAdminPin();
+    loadTournamentsList();
   } catch (e) {
     showMsg(String(e.message || e), true);
   }
-});
-
-document.getElementById("unlockForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const pin = String(document.getElementById("unlockPin").value || "").trim();
-  if (pin.length < 4) {
-    showMsg("PIN слишком короткий", true);
-    return;
-  }
-
-  try {
-    const res = await fetch("/api/admin/pin/verify", {
-      method: "POST",
-      headers: { "X-Admin-Pin": pin },
-    });
-    if (!res.ok) {
-      showMsg("Неверный PIN", true);
-      return;
-    }
-    sessionStorage.setItem(PIN_SESSION_KEY, pin);
-    showMsg("PIN принят.");
-    await fetchStatus().then(applyVisibility);
-  } catch (e) {
-    showMsg(String(e.message || e), true);
-  }
-});
-
-document.getElementById("clearPinBtn").addEventListener("click", async () => {
-  sessionStorage.removeItem(PIN_SESSION_KEY);
-  showMsg("");
-  await fetchStatus().then(applyVisibility);
 });
 
 document.getElementById("addRunForm").addEventListener("submit", async (ev) => {
@@ -322,8 +327,16 @@ document.getElementById("tournamentAssignForm").addEventListener("submit", async
   showMsg(res.ok ? "Слот назначен" : txt, !res.ok);
 });
 
-fetchStatus()
-  .then(applyVisibility)
-  .catch(function (e) {
-    showMsg("Не удалось связаться с устройством: " + (e.message || e), true);
-  });
+if (!localStorage.getItem(PIN_STORAGE_KEY)) {
+  setAdminPin(DEFAULT_PIN);
+}
+
+probeAdminPin().then(function (ok) {
+  if (ok) {
+    initAdminPanel();
+  }
+});
+
+fetchStatus().catch(function (e) {
+  showMsg("Не удалось связаться с устройством: " + (e.message || e), true);
+});
