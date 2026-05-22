@@ -11,6 +11,10 @@ typedef enum {
     CYBEER_LED_FX_CLAIM_PENDING,
     CYBEER_LED_FX_PODIUM,
     CYBEER_LED_FX_WIFI_SETUP,
+    CYBEER_LED_FX_OTA_DOWNLOAD,
+    CYBEER_LED_FX_OTA_WRITE,
+    CYBEER_LED_FX_OTA_OK,
+    CYBEER_LED_FX_OTA_FAIL,
 } cybeer_led_fx_t;
 
 void cybeer_led_init(void);

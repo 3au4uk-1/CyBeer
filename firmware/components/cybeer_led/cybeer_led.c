@@ -16,12 +16,16 @@ static const char *TAG = "cybeer_led";
 #define FINISHED_FLASH_DELAY_US 150000
 #define CYBEER_LED_FINISHED_FLASH_US    180000
 #define CYBEER_LED_FINISHED_DIM_HOLD_US 700000
+#define CYBEER_LED_OTA_OK_HOLD_US       3000000
+#define CYBEER_LED_OTA_FAIL_PHASE_US    150000
+#define CYBEER_LED_OTA_FAIL_TOTAL_US    900000
 static led_strip_handle_t s_strip;
 static uint8_t s_led_count = CYBEER_LED_COUNT_DEFAULT;
 /** Global brightness scale [1,255]; applied alongside per-effect offsets. */
 static uint8_t s_led_brightness_base = CYBEER_LED_BRIGHTNESS_DEFAULT;
 static cybeer_led_fx_t s_fx_requested = CYBEER_LED_FX_AMBIENT;
 static int64_t s_finished_enter_us;
+static int64_t s_ota_transient_enter_us;
 static int64_t s_podium_until_us;
 static bool s_has_unclaimed_run;
 static cybeer_led_fx_t s_delayed_fx;
@@ -121,6 +125,16 @@ static esp_err_t render_frame(int64_t now_us)
         s_fx_requested = CYBEER_LED_FX_AMBIENT;
         rq = CYBEER_LED_FX_AMBIENT;
     }
+    if (s_fx_requested == CYBEER_LED_FX_OTA_OK &&
+        (now_us - s_ota_transient_enter_us) >= (int64_t)CYBEER_LED_OTA_OK_HOLD_US) {
+        s_fx_requested = CYBEER_LED_FX_AMBIENT;
+        rq = CYBEER_LED_FX_AMBIENT;
+    }
+    if (s_fx_requested == CYBEER_LED_FX_OTA_FAIL &&
+        (now_us - s_ota_transient_enter_us) >= (int64_t)CYBEER_LED_OTA_FAIL_TOTAL_US) {
+        s_fx_requested = CYBEER_LED_FX_AMBIENT;
+        rq = CYBEER_LED_FX_AMBIENT;
+    }
     if (rq == CYBEER_LED_FX_FINISHED) {
         const int64_t dt = now_us - s_finished_enter_us;
         if (dt < (int64_t)CYBEER_LED_FINISHED_FLASH_US) {
@@ -211,6 +225,68 @@ static esp_err_t render_frame(int64_t now_us)
         rgb_scale(br, 24, 64, 255, &r, &g, &b);
         return draw_all(r, g, b);
     }
+    case CYBEER_LED_FX_OTA_DOWNLOAD: {
+        uint32_t br = tri_wave(now_us, 1500);
+        uint32_t r;
+        uint32_t g;
+        uint32_t b;
+        rgb_scale((uint32_t)s_led_brightness_base * br / 255, 0, 0, 255, &r, &g, &b);
+        return draw_all(r, g, b);
+    }
+    case CYBEER_LED_FX_OTA_WRITE: {
+        const uint32_t n = (uint32_t)(s_led_count ? s_led_count : 1);
+        const uint32_t head = ((uint32_t)(now_us / 100000)) % n;
+        int tail_span = s_led_count > 14 ? 8 : ((int)s_led_count / 3);
+        if (tail_span < 3) {
+            tail_span = 3;
+        }
+        for (uint32_t i = 0; i < (uint32_t)s_led_count; i++) {
+            int dist = (int)head - (int)i;
+            if (dist < 0) {
+                dist += s_led_count;
+            }
+            uint32_t rr;
+            uint32_t gg;
+            uint32_t bb;
+            if (dist == 0) {
+                rr = 0;
+                gg = 40;
+                bb = 255;
+            } else if (dist < tail_span) {
+                uint32_t falloff =
+                    ((uint32_t)(tail_span - dist) * 255 + (uint32_t)tail_span - 1u) / (uint32_t)tail_span;
+                rgb_scale(((uint32_t)s_led_brightness_base + 140) * falloff / 255, 0, 40, 255, &rr, &gg, &bb);
+            } else {
+                rr = 0;
+                gg = 4;
+                bb = 20;
+            }
+            esp_err_t e = led_strip_set_pixel(s_strip, i, rr, gg, bb);
+            if (e != ESP_OK) {
+                return e;
+            }
+        }
+        return led_strip_refresh(s_strip);
+    }
+    case CYBEER_LED_FX_OTA_OK: {
+        uint32_t r;
+        uint32_t g;
+        uint32_t b;
+        rgb_scale((uint32_t)s_led_brightness_base, 0, 255, 0, &r, &g, &b);
+        return draw_all(r, g, b);
+    }
+    case CYBEER_LED_FX_OTA_FAIL: {
+        const int64_t dt = now_us - s_ota_transient_enter_us;
+        const int phase = (int)(dt / (int64_t)CYBEER_LED_OTA_FAIL_PHASE_US);
+        if (phase % 2 == 0) {
+            uint32_t r;
+            uint32_t g;
+            uint32_t b;
+            rgb_scale((uint32_t)s_led_brightness_base, 255, 0, 0, &r, &g, &b);
+            return draw_all(r, g, b);
+        }
+        return draw_all(0, 0, 0);
+    }
     default:
         return draw_all(0, 0, 0);
     }
@@ -255,6 +331,9 @@ static void apply_fx_immediate(cybeer_led_fx_t fx)
     const int64_t now = esp_timer_get_time();
     if (fx == CYBEER_LED_FX_FINISHED) {
         s_finished_enter_us = now;
+    }
+    if (fx == CYBEER_LED_FX_OTA_OK || fx == CYBEER_LED_FX_OTA_FAIL) {
+        s_ota_transient_enter_us = now;
     }
     if (fx == CYBEER_LED_FX_PODIUM) {
         s_podium_until_us = now + (int64_t)6000000;
