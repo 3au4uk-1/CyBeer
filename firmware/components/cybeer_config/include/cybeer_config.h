@@ -17,5 +17,5 @@
 #define CYBEER_ADMIN_PIN_MAX_LEN    16
 #define CYBEER_MDNS_HOSTNAME        "cybeer"
 
-#define CYBEER_OTA_MANIFEST_URL "https://raw.githubusercontent.com/zau/CyBeer/main/version.json"
+#define CYBEER_OTA_MANIFEST_URL "https://raw.githubusercontent.com/3au4uk-1/CyBeer/master/version.json"
 #define CYBEER_OTA_CHECK_CACHE_SEC 300
