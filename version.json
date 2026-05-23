@@ -1,7 +1,7 @@
 {
   "version": "1.1.11",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.11/cybeer-v1.1.11.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1459197,
+  "sha256": "d1bc57a34b9771b3fdfa238de88ae635bca56c8bc42c12237f3fa866e0710908",
   "changelog": "Исправлен boot loop v1.1.10: превышен лимит HTTP-маршрутов. Удалён дублирующий claim route, лимит увеличен до 40."
 }
