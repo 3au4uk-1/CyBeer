@@ -1,0 +1,85 @@
+name: Release OTA Bundle
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ESP-IDF
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: v6.0.1
+
+      - name: Build firmware
+        working-directory: firmware
+        run: |
+          idf.py set-target esp32c3
+          idf.py build
+
+      - name: Build OTA bundle
+        run: python tools/build_bundle.py firmware
+
+      - name: Read version and bundle metadata
+        id: meta
+        run: |
+          VERSION=$(grep -oP 'project\(\s*cybeer\s+VERSION\s+\K[\d.]+' firmware/CMakeLists.txt)
+          BUNDLE="firmware/build/cybeer-v${VERSION}.cyb"
+          if [ ! -f "$BUNDLE" ]; then
+            echo "Bundle not found: $BUNDLE"
+            exit 1
+          fi
+          SHA=$(sha256sum "$BUNDLE" | awk '{print $1}')
+          SIZE=$(stat -c%s "$BUNDLE")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "bundle=$BUNDLE" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CyBeer ${{ steps.meta.outputs.version }}
+          generate_release_notes: true
+          files: ${{ steps.meta.outputs.bundle }}
+
+      - name: Update version.json on master
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHA256: ${{ steps.meta.outputs.sha256 }}
+          SIZE: ${{ steps.meta.outputs.size }}
+        run: |
+          export URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/cybeer-v${VERSION}.cyb"
+          python3 << 'PY'
+          import json, os
+          path = "version.json"
+          with open(path, encoding="utf-8") as f:
+              data = json.load(f)
+          data["version"] = os.environ["VERSION"]
+          data["url"] = os.environ["URL"]
+          data["size"] = int(os.environ["SIZE"])
+          data["sha256"] = os.environ["SHA256"]
+          with open(path, "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+              f.write("\n")
+          PY
+          cp version.json /tmp/version.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin master
+          git checkout master
+          git pull origin master
+          cp /tmp/version.json version.json
+          git add version.json
+          git diff --staged --quiet || git commit -m "chore: update version.json for v${VERSION}"
+          git push origin master
