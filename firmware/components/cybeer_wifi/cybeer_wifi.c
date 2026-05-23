@@ -175,7 +175,9 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             ESP_LOGW(TAG, "AP client left aid=%u reason=%d", (unsigned)ev->aid, ev->reason);
         }
     } else if (id == WIFI_EVENT_STA_START) {
-        (void)esp_wifi_connect();
+        if (cybeer_wifi_sta_credentials_configured()) {
+            (void)esp_wifi_connect();
+        }
     } else if (id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *ev = (const wifi_event_sta_disconnected_t *)data;
         if (ev) {
@@ -183,7 +185,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         }
         s_sta_has_ip = false;
         s_sta_ip_str[0] = '\0';
-        if (s_sta_netif != NULL) {
+        if (s_sta_netif != NULL && cybeer_wifi_sta_credentials_configured()) {
             schedule_sta_reconnect();
         }
     }
@@ -267,19 +269,27 @@ static esp_err_t h_get_scan(httpd_req_t *req)
         return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
     }
 
-    /*
-     * Scan is allowed in STA and APSTA (admin panel reconfiguration).
-     * In APSTA, connected SoftAP clients may briefly drop during scan.
-     */
+    /* Scan uses the STA interface; switch AP-only to APSTA for the duration. */
+    if (mode == WIFI_MODE_AP) {
+        esp_err_t merr = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (merr != ESP_OK) {
+            ESP_LOGE(TAG, "scan: APSTA mode failed: %s", esp_err_to_name(merr));
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_set_status(req, "503 Service Unavailable");
+            return httpd_resp_send(req, "{\"error\":\"scan_unavailable\"}", HTTPD_RESP_USE_STRLEN);
+        }
+    }
+
     wifi_scan_config_t scan_cfg = {
         .show_hidden = false,
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
     };
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi scan failed: %s", esp_err_to_name(err));
         httpd_resp_set_type(req, "application/json");
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_send(req, "{\"error\":\"scan_failed\"}", HTTPD_RESP_USE_STRLEN);
     }
 
     uint16_t ap_count = 0;
@@ -672,18 +682,16 @@ esp_err_t cybeer_wifi_start(void)
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "cfg ap");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg), TAG, "cfg sta");
     } else {
-        build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
+        s_sta_netif = esp_netif_create_default_wifi_sta();
+        ESP_RETURN_ON_FALSE(s_sta_netif != NULL, ESP_FAIL, TAG, "sta netif");
 
-        s_ap_netif = esp_netif_create_default_wifi_ap();
-        ESP_RETURN_ON_FALSE(s_ap_netif != NULL, ESP_FAIL, TAG, "ap netif");
-
-        ESP_RETURN_ON_ERROR(ap_netif_configure_dhcps(s_ap_netif), TAG, "ap ip/dhcp");
+        ESP_RETURN_ON_ERROR(ensure_ap_netif(), TAG, "ap netif");
 
         wifi_config_t ap_cfg;
         build_ap_config(&ap_cfg);
 
-        s_sta_netif = NULL;
-        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_AP), TAG, "mode ap");
+        /* APSTA even without STA creds — STA iface is needed for WiFi scan during setup. */
+        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "mode apsta");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "cfg ap");
     }
 
@@ -695,8 +703,7 @@ esp_err_t cybeer_wifi_start(void)
         ESP_LOGI(TAG, "APSTA mode: STA \"%s\", AP \"%s\" @ 192.168.4.1", sta_ssid, s_ap_ssid);
     } else {
         (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
-        ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24 (open)", s_ap_ssid);
-        ESP_LOGI(TAG, "Provisioning mode (no STA credentials)");
+        ESP_LOGI(TAG, "APSTA provisioning: AP \"%s\" @ 192.168.4.1 (no STA credentials)", s_ap_ssid);
         cybeer_led_set_fx(CYBEER_LED_FX_WIFI_SETUP);
         start_captive_dns_task();
     }
