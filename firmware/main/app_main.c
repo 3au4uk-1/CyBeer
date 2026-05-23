@@ -2,6 +2,8 @@
 #include "cybeer_display.h"
 #include "cybeer_fsm.h"
 #include "cybeer_led.h"
+#include "cybeer_ota.h"
+#include "cybeer_power.h"
 #include "cybeer_storage.h"
 #include "cybeer_tournament.h"
 #include "cybeer_web.h"
@@ -104,18 +106,24 @@ static void display_task(void *pvParameters)
 
     cybeer_state_t fsm_prev = CYBEER_STATE_PREP;
     int64_t last_display_us = 0;
+    bool switch_prev_pressed = false;
 
     for (;;) {
         const int64_t now = esp_timer_get_time();
 
         cybeer_switch_state_t sw = { 0 };
         cybeer_switch_poll(now, &sw);
+        if (sw.pressed != switch_prev_pressed) {
+            cybeer_power_note_activity();
+            switch_prev_pressed = sw.pressed;
+        }
         if (sw.pressed_stable) {
             cybeer_fsm_on_switch_stable(sw.pressed, now);
         }
 
         cybeer_fsm_snapshot_t snap = cybeer_fsm_snapshot();
         if (snap.state != fsm_prev) {
+            cybeer_power_note_activity();
             if (snap.state == CYBEER_STATE_FINISHED || fsm_prev == CYBEER_STATE_RUNNING
                 || snap.state == CYBEER_STATE_RUNNING) {
                 cybeer_ws_broadcast_state_deferred(80000);
@@ -173,6 +181,8 @@ static void display_task(void *pvParameters)
         }
         fsm_prev = snap.state;
 
+        cybeer_power_maybe_sleep(cybeer_ota_is_active(), snap.state == CYBEER_STATE_RUNNING);
+
         const uint32_t loop_ms = (snap.state == CYBEER_STATE_RUNNING) ? 33 : 25;
         vTaskDelay(pdMS_TO_TICKS(loop_ms));
     }
@@ -182,6 +192,12 @@ void app_main(void)
 {
     ESP_ERROR_CHECK(nvs_flash_init());
 
+    cybeer_switch_init();
+    cybeer_display_init();
+    if (!cybeer_power_confirm_wake_or_sleep()) {
+        return;
+    }
+
     esp_err_t mv = esp_ota_mark_app_valid_cancel_rollback();
     if (mv != ESP_OK && mv != ESP_ERR_NOT_SUPPORTED && mv != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "esp_ota_mark_app_valid_cancel_rollback: %s", esp_err_to_name(mv));
@@ -189,6 +205,7 @@ void app_main(void)
 
     ESP_ERROR_CHECK(cybeer_storage_init());
     ESP_ERROR_CHECK(cybeer_battery_init());
+    cybeer_power_note_activity();
     ESP_LOGI(TAG, "CyBeer boot");
 
     s_run_save_q = xQueueCreate(2, sizeof(run_save_msg_t));
@@ -204,8 +221,6 @@ void app_main(void)
         ESP_LOGW(TAG, "run save queue create failed");
     }
 
-    cybeer_switch_init();
-    cybeer_display_init();
     cybeer_led_init();
 
     cybeer_fsm_callbacks_t cb = {

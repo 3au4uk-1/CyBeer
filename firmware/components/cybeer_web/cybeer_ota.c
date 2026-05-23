@@ -962,3 +962,8 @@ esp_err_t cybeer_ota_register_handlers(httpd_handle_t server)
     ESP_LOGI(TAG, "OTA bundle endpoints registered");
     return ESP_OK;
 }
+
+bool cybeer_ota_is_active(void)
+{
+    return s_status.active;
+}

@@ -186,3 +186,10 @@ void cybeer_display_show_zeros(void)
     };
     flush_digits(d);
 }
+
+void cybeer_display_blank(void)
+{
+    start();
+    write_byte(0x80);
+    stop();
+}

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -22,3 +23,6 @@ typedef struct {
 const char *cybeer_firmware_version(void);
 
 esp_err_t cybeer_ota_register_handlers(httpd_handle_t server);
+
+/** True while OTA download/upload is in progress. */
+bool cybeer_ota_is_active(void);

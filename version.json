@@ -1,7 +1,7 @@
 {
-  "version": "1.1.11",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.11/cybeer-v1.1.11.cyb",
+  "version": "1.1.12",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.12/cybeer-v1.1.12.cyb",
   "size": 0,
   "sha256": "",
-  "changelog": "Исправлен boot loop v1.1.10: превышен лимит HTTP-маршрутов. Удалён дублирующий claim route, лимит увеличен до 40."
+  "changelog": "Deep sleep после 5 мин бездействия. Пробуждение тремя короткими нажатиями на GPIO9."
 }

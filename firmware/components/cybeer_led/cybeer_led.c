@@ -366,3 +366,14 @@ void cybeer_led_task_tick(int64_t now_us)
         ESP_LOGD(TAG, "strip err %s", esp_err_to_name(e));
     }
 }
+
+void cybeer_led_prepare_sleep(void)
+{
+    if (!s_strip || s_led_count == 0) {
+        return;
+    }
+    for (unsigned i = 0; i < s_led_count; i++) {
+        (void)led_strip_set_pixel(s_strip, i, 0, 0, 0);
+    }
+    (void)led_strip_refresh(s_strip);
+}

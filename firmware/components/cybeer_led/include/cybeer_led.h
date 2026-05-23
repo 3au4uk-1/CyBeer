@@ -23,3 +23,5 @@ bool cybeer_led_strip_active(void);
 void cybeer_led_set_fx(cybeer_led_fx_t fx);
 void cybeer_led_set_unclaimed_flag(bool has_unclaimed);
 void cybeer_led_task_tick(int64_t now_us);
+/** Black out strip before deep sleep. */
+void cybeer_led_prepare_sleep(void);
