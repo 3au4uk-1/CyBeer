@@ -106,19 +106,27 @@ static void display_task(void *pvParameters)
 
     cybeer_state_t fsm_prev = CYBEER_STATE_PREP;
     int64_t last_display_us = 0;
-    bool switch_prev_pressed = false;
 
     for (;;) {
         const int64_t now = esp_timer_get_time();
 
         cybeer_switch_state_t sw = { 0 };
         cybeer_switch_poll(now, &sw);
-        if (sw.pressed != switch_prev_pressed) {
-            cybeer_power_note_activity();
-            switch_prev_pressed = sw.pressed;
+
+        if (cybeer_power_is_idle()) {
+            cybeer_power_maybe_sleep(cybeer_ota_is_active(), false);
+            vTaskDelay(pdMS_TO_TICKS(25));
+            continue;
         }
+
         if (sw.pressed_stable) {
-            cybeer_fsm_on_switch_stable(sw.pressed, now);
+            if (cybeer_power_is_eco()) {
+                cybeer_power_toggle_eco();
+                cybeer_power_note_activity();
+            } else {
+                cybeer_power_note_activity();
+                cybeer_fsm_on_switch_stable(sw.pressed, now);
+            }
         }
 
         cybeer_fsm_snapshot_t snap = cybeer_fsm_snapshot();
@@ -131,30 +139,32 @@ static void display_task(void *pvParameters)
                 cybeer_ws_broadcast_state();
             }
             last_display_us = 0;
-            if (snap.state == CYBEER_STATE_PREP) {
+            if (snap.state == CYBEER_STATE_PREP && !cybeer_power_is_eco()) {
                 cybeer_display_show_zeros();
                 last_display_us = now;
             }
         }
         cybeer_ws_timer_tick(now);
 
-        switch (snap.state) {
-        case CYBEER_STATE_RUNNING:
-            if (display_update_due(now, &last_display_us, 100000)) {
-                cybeer_display_show_us(cybeer_timer_elapsed_us(now));
+        if (!cybeer_power_is_eco()) {
+            switch (snap.state) {
+            case CYBEER_STATE_RUNNING:
+                if (display_update_due(now, &last_display_us, 100000)) {
+                    cybeer_display_show_us(cybeer_timer_elapsed_us(now));
+                }
+                break;
+            case CYBEER_STATE_READY:
+            case CYBEER_STATE_FINISHED:
+                if (display_update_due(now, &last_display_us, 250000)) {
+                    cybeer_display_show_us(snap.finished_duration_us);
+                }
+                break;
+            default:
+                break;
             }
-            break;
-        case CYBEER_STATE_READY:
-        case CYBEER_STATE_FINISHED:
-            if (display_update_due(now, &last_display_us, 250000)) {
-                cybeer_display_show_us(snap.finished_duration_us);
-            }
-            break;
-        default:
-            break;
         }
 
-        if (cybeer_led_strip_active()) {
+        if (!cybeer_power_is_eco() && cybeer_led_strip_active()) {
             cybeer_led_fx_t led_fx = CYBEER_LED_FX_AMBIENT;
             switch (snap.state) {
             case CYBEER_STATE_PREP:

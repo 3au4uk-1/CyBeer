@@ -500,6 +500,27 @@ esp_err_t cybeer_storage_reset_all_data(void)
     return err;
 }
 
+static esp_err_t resolve_participant_by_id_locked(const char *pid, char pid_out[37])
+{
+    cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
+    if (!parts) {
+        return ESP_FAIL;
+    }
+
+    const cJSON *p = NULL;
+    cJSON_ArrayForEach(p, parts)
+    {
+        const cJSON *jid = cJSON_GetObjectItemCaseSensitive(p, "id");
+        if (cJSON_IsString(jid) && jid->valuestring && strcmp(jid->valuestring, pid) == 0) {
+            snprintf(pid_out, 37, "%s", jid->valuestring);
+            cJSON_Delete(parts);
+            return ESP_OK;
+        }
+    }
+    cJSON_Delete(parts);
+    return ESP_ERR_NOT_FOUND;
+}
+
 static esp_err_t resolve_participant_by_name_locked(const char *name, char pid_out[37])
 {
     cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
@@ -549,6 +570,9 @@ static esp_err_t create_participant_by_name_locked(const char *name, char pid_ou
 
     esp_err_t err = persist_json_locked(PATH_PARTICIPANTS, parts);
     cJSON_Delete(parts);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "created participant id=%s name=%s", pid_out, name);
+    }
     return err;
 }
 
@@ -561,13 +585,12 @@ esp_err_t cybeer_storage_claim_run(const char *run_id, const char *name_or_pid, 
     char pid[37] = { 0 };
     esp_err_t lookup = ESP_OK;
     if (by_participant_id) {
-        snprintf(pid, sizeof(pid), "%s", name_or_pid);
+        lookup = resolve_participant_by_id_locked(name_or_pid, pid);
     } else {
         lookup = resolve_participant_by_name_locked(name_or_pid, pid);
-    }
-
-    if (lookup == ESP_ERR_NOT_FOUND) {
-        lookup = create_participant_by_name_locked(name_or_pid, pid);
+        if (lookup == ESP_ERR_NOT_FOUND) {
+            lookup = create_participant_by_name_locked(name_or_pid, pid);
+        }
     }
     if (lookup != ESP_OK) {
         give_mtx();
@@ -613,6 +636,93 @@ esp_err_t cybeer_storage_claim_run(const char *run_id, const char *name_or_pid, 
     return err;
 }
 
+esp_err_t cybeer_storage_get_participant_name(const char *pid, char *name_out, size_t name_len)
+{
+    ESP_RETURN_ON_FALSE(pid && name_out && name_len > 0, ESP_ERR_INVALID_ARG, TAG, "args");
+    name_out[0] = '\0';
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
+    if (!parts) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    const cJSON *p = NULL;
+    cJSON_ArrayForEach(p, parts)
+    {
+        const cJSON *jid = cJSON_GetObjectItemCaseSensitive(p, "id");
+        const cJSON *jn = cJSON_GetObjectItemCaseSensitive(p, "name");
+        if (!cJSON_IsString(jid) || !jid->valuestring || strcmp(jid->valuestring, pid) != 0) {
+            continue;
+        }
+        if (cJSON_IsString(jn) && jn->valuestring) {
+            strncpy(name_out, jn->valuestring, name_len - 1);
+            name_out[name_len - 1] = '\0';
+            ret = ESP_OK;
+        }
+        break;
+    }
+    cJSON_Delete(parts);
+    give_mtx();
+    return ret;
+}
+
+esp_err_t cybeer_storage_rename_participant(const char *participant_id, const char *new_name)
+{
+    ESP_RETURN_ON_FALSE(participant_id && new_name && new_name[0], ESP_ERR_INVALID_ARG, TAG, "args");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
+    if (!parts) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    cJSON *target = NULL;
+    const cJSON *p = NULL;
+    cJSON_ArrayForEach(p, parts)
+    {
+        const cJSON *jid = cJSON_GetObjectItemCaseSensitive(p, "id");
+        const cJSON *jn = cJSON_GetObjectItemCaseSensitive(p, "name");
+        if (!cJSON_IsString(jid) || !jid->valuestring) {
+            continue;
+        }
+        if (strcmp(jid->valuestring, participant_id) == 0) {
+            target = (cJSON *)p;
+        } else if (cJSON_IsString(jn) && jn->valuestring && strcmp(jn->valuestring, new_name) == 0) {
+            cJSON_Delete(parts);
+            give_mtx();
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+
+    if (!target) {
+        cJSON_Delete(parts);
+        give_mtx();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    cJSON *jname = cJSON_GetObjectItemCaseSensitive(target, "name");
+    if (cJSON_IsString(jname)) {
+        cJSON_SetValuestring(jname, new_name);
+    } else {
+        cJSON_AddStringToObject(target, "name", new_name);
+    }
+
+    esp_err_t err = persist_json_locked(PATH_PARTICIPANTS, parts);
+    cJSON_Delete(parts);
+    give_mtx();
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "renamed participant %s -> '%s'", participant_id, new_name);
+    }
+    return err;
+}
+
 esp_err_t cybeer_storage_get_latest_unclaimed_run_id(char *out_id, size_t out_len)
 {
     ESP_RETURN_ON_FALSE(out_id && out_len > 0, ESP_ERR_INVALID_ARG, TAG, "buf");
@@ -653,7 +763,7 @@ esp_err_t cybeer_storage_get_participant_stats(const char *pid, cybeer_stats_t *
     cJSON *runs = parse_array_file_locked(PATH_RUNS);
     if (!runs) {
         give_mtx();
-        return ESP_FAIL;
+        return ESP_OK;
     }
 
     int64_t sum = 0;

@@ -76,6 +76,11 @@ esp_err_t cybeer_storage_delete_run(const char *run_id);
 esp_err_t cybeer_storage_update_run(const char *run_id, const cybeer_run_t *run);
 esp_err_t cybeer_storage_reset_all_data(void);
 esp_err_t cybeer_storage_claim_run(const char *run_id, const char *name_or_pid, bool by_participant_id);
+/** Look up display name for participant id. Returns ESP_ERR_NOT_FOUND if unknown. */
+esp_err_t cybeer_storage_get_participant_name(const char *pid, char *name_out, size_t name_len);
+
+/** Rename participant. ESP_ERR_NOT_FOUND if pid unknown, ESP_ERR_INVALID_STATE if name taken. */
+esp_err_t cybeer_storage_rename_participant(const char *participant_id, const char *new_name);
 esp_err_t cybeer_storage_get_latest_unclaimed_run_id(char *out_id, size_t out_len);
 esp_err_t cybeer_storage_get_participant_stats(const char *pid, cybeer_stats_t *out);
 

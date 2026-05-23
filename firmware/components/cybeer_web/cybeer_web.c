@@ -13,6 +13,7 @@
 #include "cybeer_storage.h"
 #include "cybeer_tournament.h"
 #include "cybeer_wifi.h"
+#include "cybeer_power.h"
 
 #include <strings.h>
 
@@ -112,6 +113,14 @@ static esp_err_t h_get_status(httpd_req_t *req)
         }
     }
     cybeer_tournament_fill_status_active_match(root);
+
+    const char *power_mode = "normal";
+    if (cybeer_power_is_idle()) {
+        power_mode = "idle";
+    } else if (cybeer_power_is_eco()) {
+        power_mode = "eco";
+    }
+    cJSON_AddStringToObject(root, "powerMode", power_mode);
 
     return json_send(req, root);
 }
@@ -283,14 +292,31 @@ static esp_err_t h_post_claim(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     if (err == ESP_OK) {
         cybeer_run_t claimed_run;
-        if (cybeer_storage_get_run(run_id, &claimed_run) == ESP_OK
+        memset(&claimed_run, 0, sizeof(claimed_run));
+        (void)cybeer_storage_get_run(run_id, &claimed_run);
+        if (claimed_run.participant_id[0] != '\0'
             && cybeer_storage_run_qualifies_podium_led(&claimed_run)) {
             cybeer_led_set_fx(CYBEER_LED_FX_PODIUM);
         }
         (void)cybeer_tournament_notify_run_claimed(run_id);
         cybeer_ws_broadcast_leaderboard_update();
         cybeer_led_set_unclaimed_flag(false);
-        return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+
+        char pname[128] = { 0 };
+        if (claimed_run.participant_id[0] != '\0') {
+            (void)cybeer_storage_get_participant_name(claimed_run.participant_id, pname, sizeof(pname));
+        }
+
+        cJSON *resp = cJSON_CreateObject();
+        if (!resp) {
+            return httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
+        }
+        cJSON_AddBoolToObject(resp, "ok", true);
+        if (claimed_run.participant_id[0] != '\0') {
+            cJSON_AddStringToObject(resp, "participantId", claimed_run.participant_id);
+            cJSON_AddStringToObject(resp, "participantName", pname);
+        }
+        return json_send(req, resp);
     }
     if (err == ESP_ERR_NOT_FOUND) {
         httpd_resp_set_status(req, "404 Not Found");
@@ -677,6 +703,109 @@ static esp_err_t h_delete_admin_data_reset(httpd_req_t *req)
     }
     cybeer_led_set_unclaimed_flag(false);
     return send_json_text(req, "200 OK", "{\"ok\":true}");
+}
+
+static esp_err_t h_post_admin_reboot(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    esp_err_t sent = send_json_text(req, "200 OK", "{\"ok\":true}");
+    if (sent == ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        esp_restart();
+    }
+    return sent;
+}
+
+static esp_err_t h_post_admin_power_eco(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    bool eco = cybeer_power_toggle_eco();
+    char resp[32];
+    snprintf(resp, sizeof(resp), "{\"eco\":%s}", eco ? "true" : "false");
+    return send_json_text(req, "200 OK", resp);
+}
+
+static esp_err_t h_post_admin_power_sleep(httpd_req_t *req)
+{
+    esp_err_t g = require_admin_pin(req);
+    if (g != ESP_OK) {
+        return g;
+    }
+    esp_err_t sent = send_json_text(req, "200 OK", "{\"ok\":true,\"msg\":\"sleeping\"}");
+    if (sent == ESP_OK) {
+        cybeer_power_trigger_sleep();
+    }
+    return sent;
+}
+
+static bool parse_participant_id_path(const char *path, char pid_out[40])
+{
+    const char *pfx = "/api/participants/";
+    if (strncmp(path, pfx, strlen(pfx)) != 0) {
+        return false;
+    }
+    const char *pid = path + strlen(pfx);
+    size_t len = strlen(pid);
+    if (len == 0 || len >= 40 || strchr(pid, '/') != NULL) {
+        return false;
+    }
+    snprintf(pid_out, 40, "%s", pid);
+    return true;
+}
+
+static esp_err_t h_patch_participant(httpd_req_t *req)
+{
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char pid[40];
+    if (!parse_participant_id_path(path, pid)) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
+    }
+
+    if (req->content_len <= 0 || req->content_len > 256) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"body\"}");
+    }
+    char body[260];
+    int r = httpd_req_recv(req, body, (size_t)req->content_len);
+    if (r <= 0) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"recv\"}");
+    }
+    body[r] = '\0';
+
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"json\"}");
+    }
+    const cJSON *jname = cJSON_GetObjectItemCaseSensitive(root, "name");
+    if (!cJSON_IsString(jname) || !jname->valuestring || jname->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"name required\"}");
+    }
+    if (strlen(jname->valuestring) > 32) {
+        cJSON_Delete(root);
+        return send_json_text(req, "400 Bad Request", "{\"error\":\"name max 32 chars\"}");
+    }
+
+    esp_err_t err = cybeer_storage_rename_participant(pid, jname->valuestring);
+    cJSON_Delete(root);
+
+    if (err == ESP_OK) {
+        cybeer_ws_broadcast_leaderboard_update();
+        return send_json_text(req, "200 OK", "{\"ok\":true}");
+    }
+    if (err == ESP_ERR_NOT_FOUND) {
+        return send_json_text(req, "404 Not Found", "{\"error\":\"not_found\"}");
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_json_text(req, "409 Conflict", "{\"error\":\"name_taken\"}");
+    }
+    return send_json_text(req, "500 Internal Server Error", "{\"error\":\"storage\"}");
 }
 
 static bool export_wants_csv(const char *full_uri)
@@ -1316,6 +1445,18 @@ esp_err_t cybeer_web_start(void)
         .handler = h_get_admin_tournaments,
         .user_ctx = NULL
     };
+    httpd_uri_t u_admin_reboot = {
+        .uri = "/api/admin/reboot", .method = HTTP_POST, .handler = h_post_admin_reboot, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_power_eco = {
+        .uri = "/api/admin/power/eco", .method = HTTP_POST, .handler = h_post_admin_power_eco, .user_ctx = NULL
+    };
+    httpd_uri_t u_admin_power_sleep = {
+        .uri = "/api/admin/power/sleep", .method = HTTP_POST, .handler = h_post_admin_power_sleep, .user_ctx = NULL
+    };
+    httpd_uri_t u_part_rename = {
+        .uri = "/api/participants/*", .method = HTTP_PATCH, .handler = h_patch_participant, .user_ctx = NULL
+    };
 
     httpd_uri_t u_static = { .uri = "/*", .method = HTTP_GET, .handler = h_static, .user_ctx = NULL };
 
@@ -1324,6 +1465,7 @@ esp_err_t cybeer_web_start(void)
         || httpd_register_uri_handler(s_server, &u_leaderboard) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_stats) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_runs) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_part_rename) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_active_pub) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_assign) != ESP_OK
@@ -1339,6 +1481,9 @@ esp_err_t cybeer_web_start(void)
         || httpd_register_uri_handler(s_server, &u_admin_reset) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_export) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_settings_put) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_reboot) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_power_eco) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_admin_power_sleep) != ESP_OK
         || cybeer_ota_register_handlers(s_server) != ESP_OK || cybeer_ws_register(s_server) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_static) != ESP_OK) {
         ESP_LOGE(TAG, "register uri failed");

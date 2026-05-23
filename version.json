@@ -1,7 +1,7 @@
 {
-  "version": "1.1.13",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.13/cybeer-v1.1.13.cyb",
-  "size": 1469229,
-  "sha256": "fbfcce26cbfcffaf6f7ca8d879df9da2590f1aa2f3ee7b42c40034f7c5c1f8fd",
-  "changelog": "Light sleep вместо deep sleep на GPIO9 (ESP32-C3: wake только GPIO0–5). Wi-Fi не отключается при сне."
+  "version": "1.1.14",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.14/cybeer-v1.1.14.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "WebUI: кнопки перезагрузки, эко-режима и сна в админке; переименование участника на странице игрока; исправление отображения имён после claim."
 }

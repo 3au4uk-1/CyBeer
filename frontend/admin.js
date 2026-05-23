@@ -636,3 +636,71 @@ function otaHandleWsMessage(data) {
 
   otaCheck();
 })();
+
+(function initPowerControls() {
+  const rebootBtn = document.getElementById("rebootBtn");
+  const ecoBtn = document.getElementById("ecoBtn");
+  const sleepBtn = document.getElementById("sleepBtn");
+  const powerStatus = document.getElementById("powerStatus");
+
+  if (!rebootBtn) return;
+
+  async function updatePowerStatus() {
+    try {
+      const res = await fetch("/api/status");
+      const st = await res.json();
+      if (st.powerMode === "eco") {
+        ecoBtn.classList.add("active");
+        ecoBtn.textContent = "Энергосбережение (вкл)";
+        if (powerStatus) powerStatus.textContent = "Режим: Энергосбережение";
+      } else {
+        ecoBtn.classList.remove("active");
+        ecoBtn.textContent = "Энергосбережение";
+        if (powerStatus) {
+          powerStatus.textContent =
+            st.powerMode === "idle" ? "Режим: ожидание (тройное нажатие для пробуждения)" : "";
+        }
+      }
+    } catch (_) {}
+  }
+
+  rebootBtn.addEventListener("click", async function () {
+    try {
+      await fetch("/api/admin/reboot", { method: "POST", headers: pinHeaders() });
+      showMsg("Устройство перезагружается…");
+    } catch (_) {
+      showMsg("Ошибка отправки команды", true);
+    }
+  });
+
+  ecoBtn.addEventListener("click", async function () {
+    try {
+      const res = await fetch("/api/admin/power/eco", { method: "POST", headers: pinHeaders() });
+      const data = await res.json();
+      if (data.eco) {
+        ecoBtn.classList.add("active");
+        ecoBtn.textContent = "Энергосбережение (вкл)";
+        showMsg("Энергосбережение включено");
+        if (powerStatus) powerStatus.textContent = "Режим: Энергосбережение";
+      } else {
+        ecoBtn.classList.remove("active");
+        ecoBtn.textContent = "Энергосбережение";
+        showMsg("Энергосбережение выключено");
+        if (powerStatus) powerStatus.textContent = "";
+      }
+    } catch (_) {
+      showMsg("Ошибка отправки команды", true);
+    }
+  });
+
+  sleepBtn.addEventListener("click", async function () {
+    try {
+      await fetch("/api/admin/power/sleep", { method: "POST", headers: pinHeaders() });
+      showMsg("Устройство уснуло. Для пробуждения нажмите кнопку 3 раза.");
+    } catch (_) {
+      showMsg("Ошибка отправки команды", true);
+    }
+  });
+
+  updatePowerStatus();
+})();

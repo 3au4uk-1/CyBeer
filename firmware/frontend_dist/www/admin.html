@@ -149,6 +149,16 @@
         </form>
       </details>
 
+      <details open>
+        <summary>Управление устройством</summary>
+        <div class="power-controls">
+          <button type="button" id="rebootBtn" class="danger">Перезагрузить</button>
+          <button type="button" id="ecoBtn">Энергосбережение</button>
+          <button type="button" id="sleepBtn">Сон</button>
+        </div>
+        <p class="hint" id="powerStatus"></p>
+      </details>
+
       <details id="otaSection">
         <summary>Обновление прошивки</summary>
         <div id="otaCurrentVer"></div>
@@ -182,6 +192,9 @@
     #resetPinBtn { margin-top: 0.5rem; }
     textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem; }
     button.danger { border-color: var(--danger); color: var(--danger); }
+    .power-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .power-controls button { flex: 1; min-width: 8rem; }
+    #ecoBtn.active { background: var(--amber); color: #000; border-color: var(--amber); }
   </style>
 
   <script>window.__CYBEER_PAGE__ = "admin";</script>

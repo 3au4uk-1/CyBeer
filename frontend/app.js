@@ -424,6 +424,12 @@
       } catch (_) {}
       throw new Error(msg);
     }
+    try {
+      const claimResult = JSON.parse(txt);
+      if (claimResult.participantId && claimResult.participantName) {
+        nameByPid.set(claimResult.participantId, claimResult.participantName);
+      }
+    } catch (_) {}
     lastUnclaimedRunId = null;
     lastUnclaimedDurationUs = null;
     updateTimerHero(currentFsmState, runDuration);

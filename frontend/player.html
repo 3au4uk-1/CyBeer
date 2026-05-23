@@ -27,6 +27,13 @@
     <section class="panel" id="playerPanel">
       <div class="player-card">
         <h2 id="playerName">Загрузка…</h2>
+        <button type="button" id="renameBtn" class="btn-edit" hidden>Изменить имя</button>
+        <div id="renameForm" hidden>
+          <input type="text" id="renameInput" maxlength="32" placeholder="Новое имя" />
+          <button type="button" id="renameSave">Сохранить</button>
+          <button type="button" id="renameCancel">Отмена</button>
+          <p class="hint err" id="renameMsg"></p>
+        </div>
         <div class="player-rank" id="playerRank"></div>
       </div>
 
@@ -44,6 +51,12 @@
     </section>
   </main>
 
+  <style>
+    .btn-edit { font-size: 0.8rem; margin: 0.25rem 0 0.5rem; padding: 0.2rem 0.6rem; }
+    #renameForm { margin: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+    #renameForm input { flex: 1; min-width: 10rem; }
+    #renameMsg { width: 100%; margin: 0; }
+  </style>
   <script>window.__CYBEER_PAGE__ = "player";</script>
   <script src="/app.js"></script>
   <script>
@@ -60,6 +73,62 @@
       var name = cy.nameByPid.get(id) || id.slice(0, 12) + "…";
       document.getElementById("playerName").textContent = name;
       document.title = "CyBeer — " + name;
+      document.getElementById("renameBtn").hidden = false;
+    });
+
+    var renameBtn = document.getElementById("renameBtn");
+    var renameForm = document.getElementById("renameForm");
+    var renameInput = document.getElementById("renameInput");
+    var renameSave = document.getElementById("renameSave");
+    var renameCancel = document.getElementById("renameCancel");
+    var renameMsg = document.getElementById("renameMsg");
+
+    renameBtn.addEventListener("click", function () {
+      renameBtn.hidden = true;
+      renameForm.hidden = false;
+      renameInput.value = document.getElementById("playerName").textContent;
+      renameInput.focus();
+      renameMsg.textContent = "";
+    });
+
+    renameCancel.addEventListener("click", function () {
+      renameForm.hidden = true;
+      renameBtn.hidden = false;
+      renameMsg.textContent = "";
+    });
+
+    renameSave.addEventListener("click", async function () {
+      var newName = renameInput.value.trim();
+      if (!newName) {
+        renameMsg.textContent = "Имя не может быть пустым";
+        return;
+      }
+      renameMsg.textContent = "";
+      try {
+        var res = await fetch("/api/participants/" + encodeURIComponent(id), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName }),
+        });
+        if (res.ok) {
+          document.getElementById("playerName").textContent = newName;
+          document.title = "CyBeer — " + newName;
+          cy.nameByPid.set(id, newName);
+          renameForm.hidden = true;
+          renameBtn.hidden = false;
+        } else {
+          var data = await res.json().catch(function () { return {}; });
+          if (data.error === "name_taken") {
+            renameMsg.textContent = "Это имя уже занято";
+          } else if (data.error === "not_found") {
+            renameMsg.textContent = "Участник не найден";
+          } else {
+            renameMsg.textContent = "Ошибка: " + (data.error || res.status);
+          }
+        }
+      } catch (_) {
+        renameMsg.textContent = "Ошибка сети";
+      }
     });
 
     fetch("/api/participants/" + encodeURIComponent(id) + "/stats")
