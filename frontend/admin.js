@@ -190,11 +190,22 @@ async function prefillLedSettingsFromStatus() {
   } catch (_) {}
 }
 
+function ledBrightnessToPercent(raw) {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 25;
+  return Math.max(1, Math.min(100, Math.round((raw * 100) / 255)));
+}
+
+function ledPercentToBrightness(pct) {
+  const p = Number(pct);
+  if (!Number.isFinite(p)) return 64;
+  return Math.max(1, Math.min(255, Math.round((p * 255) / 100)));
+}
+
 function prefillLedSettings(cfg) {
   const lc = document.getElementById("ledCountInput");
   const lb = document.getElementById("ledBrightnessInput");
   if (lc && typeof cfg.ledCount === "number") lc.value = cfg.ledCount;
-  if (lb && typeof cfg.ledBrightness === "number") lb.value = cfg.ledBrightness;
+  if (lb && typeof cfg.ledBrightness === "number") lb.value = ledBrightnessToPercent(cfg.ledBrightness);
 }
 
 async function loadTournamentParticipants() {
@@ -374,7 +385,7 @@ document.getElementById("settingsForm").addEventListener("submit", async (ev) =>
   const fd = new FormData(ev.target);
   const body = JSON.stringify({
     ledCount: Number(fd.get("ledCount")),
-    brightness: Number(fd.get("brightness")),
+    brightness: ledPercentToBrightness(fd.get("brightness")),
   });
   try {
     const res = await fetch("/api/settings", {
