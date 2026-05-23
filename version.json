@@ -1,7 +1,7 @@
 {
   "version": "1.1.14",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.14/cybeer-v1.1.14.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1472653,
+  "sha256": "004cee0acb450b5fff29a2b3586d42728629238863f69ebc79068ff656e2608b",
   "changelog": "WebUI: кнопки перезагрузки, эко-режима и сна в админке; переименование участника на странице игрока; исправление отображения имён после claim."
 }
