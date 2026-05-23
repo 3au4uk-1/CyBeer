@@ -24,10 +24,31 @@
   </header>
 
   <main>
-    <section class="panel timer-hero" id="timerHero">
+    <section class="panel timer-hero" id="timerHero" role="button" tabindex="0" aria-label="Результат заезда">
       <div class="timer-value" id="timerValue">0.00с</div>
       <div class="timer-label" id="timerLabel">Готов к старту</div>
+      <p class="timer-hint" id="timerHint" hidden></p>
     </section>
+
+    <div class="modal-overlay" id="claimModal" hidden>
+      <div class="modal panel claim-panel" role="dialog" aria-labelledby="claimModalTitle" aria-modal="true">
+        <h2 id="claimModalTitle">Привязать заезд</h2>
+        <p>Результат: <strong class="claim-result" id="claimModalTime">—</strong></p>
+        <form id="claimModalForm">
+          <label for="claimModalSelect">Участник</label>
+          <select id="claimModalSelect">
+            <option value="">— Новый участник —</option>
+          </select>
+          <label for="claimModalName">Или новое имя</label>
+          <input type="text" id="claimModalName" placeholder="Имя участника" autocomplete="name" />
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="claimModalCancel">Отмена</button>
+            <button type="submit" class="btn-primary">Сохранить</button>
+          </div>
+        </form>
+        <p id="claimModalMsg" class="msg" aria-live="polite"></p>
+      </div>
+    </div>
 
     <section class="panel">
       <h2>Лидерборд</h2>

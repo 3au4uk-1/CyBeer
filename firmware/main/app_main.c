@@ -41,6 +41,10 @@ static void persist_finished_run(int64_t duration_us)
 
     esp_err_t err = cybeer_storage_add_run(&run);
     if (err != ESP_OK) {
+        vTaskDelay(pdMS_TO_TICKS(40));
+        err = cybeer_storage_add_run(&run);
+    }
+    if (err != ESP_OK) {
         ESP_LOGE(TAG, "storage_add_run failed: %s", esp_err_to_name(err));
         return;
     }
