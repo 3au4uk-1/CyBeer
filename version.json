@@ -1,7 +1,7 @@
 {
   "version": "1.1.12",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.12/cybeer-v1.1.12.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1467709,
+  "sha256": "13c26b7cdcce4030ec5603446aa6da3b8cca27833744db35b3663e3a0e33140c",
   "changelog": "Deep sleep после 5 мин бездействия. Пробуждение тремя короткими нажатиями на GPIO9."
 }
