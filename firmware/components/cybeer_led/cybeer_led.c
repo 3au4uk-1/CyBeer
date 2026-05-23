@@ -21,7 +21,7 @@ static const char *TAG = "cybeer_led";
 #define CYBEER_LED_OTA_FAIL_TOTAL_US    900000
 static led_strip_handle_t s_strip;
 static uint8_t s_led_count = CYBEER_LED_COUNT_DEFAULT;
-/** Global brightness scale [1,255]; applied alongside per-effect offsets. */
+/** Global brightness scale [1,255]; uniform multiplier for every LED effect. */
 static uint8_t s_led_brightness_base = CYBEER_LED_BRIGHTNESS_DEFAULT;
 static cybeer_led_fx_t s_fx_requested = CYBEER_LED_FX_AMBIENT;
 static int64_t s_finished_enter_us;
@@ -80,6 +80,18 @@ static void rgb_scale(uint32_t br, uint8_t r, uint8_t g, uint8_t b, uint32_t *ou
     *out_g = (uint32_t)g * br / 255;
     *out_b = (uint32_t)b * br / 255;
 }
+
+/** Per-effect level [0..255] scaled by global brightness from admin (1..255). */
+static uint32_t led_combined_br(uint32_t effect_br)
+{
+    return (effect_br * (uint32_t)s_led_brightness_base) / 255;
+}
+
+static void led_color(uint32_t effect_br, uint8_t r, uint8_t g, uint8_t b, uint32_t *out_r,
+                      uint32_t *out_g, uint32_t *out_b)
+{
+    rgb_scale(led_combined_br(effect_br), r, g, b, out_r, out_g, out_b);
+}
 static esp_err_t draw_all(uint32_t r, uint32_t g, uint32_t b)
 {
     if (!s_strip || s_led_count == 0) {
@@ -98,21 +110,20 @@ static esp_err_t draw_all(uint32_t r, uint32_t g, uint32_t b)
 }
 static esp_err_t render_ambient(int64_t now_us)
 {
-    uint32_t br = tri_wave(now_us, 1800);
-    const uint32_t base = s_led_brightness_base;
+    const uint32_t wave = tri_wave(now_us, 1800);
     uint32_t r;
     uint32_t g;
     uint32_t b;
-    rgb_scale(base * br / 255, 10, 200, 20, &r, &g, &b);
+    led_color(wave, 10, 200, 20, &r, &g, &b);
     return draw_all(r, g, b);
 }
 static esp_err_t render_claim_pending(int64_t now_us)
 {
-    uint32_t br = ((((now_us / 1000) % 900) < 450) ? (uint32_t)s_led_brightness_base + 60 : 0);
+    const uint32_t wave = (((now_us / 1000) % 900) < 450) ? 255U : 0U;
     uint32_t r;
     uint32_t g;
     uint32_t b;
-    rgb_scale(br, 255, 220, 0, &r, &g, &b);
+    led_color(wave, 255, 220, 0, &r, &g, &b);
     return draw_all(r, g, b);
 }
 static esp_err_t render_frame(int64_t now_us)
@@ -141,17 +152,17 @@ static esp_err_t render_frame(int64_t now_us)
             uint32_t r;
             uint32_t g;
             uint32_t b;
-            uint32_t br = (uint32_t)s_led_brightness_base + 48;
-            if (br > 200) {
-                br = 200;
-            }
-            rgb_scale(br, 255, 255, 240, &r, &g, &b);
+            led_color(255, 255, 255, 240, &r, &g, &b);
             return draw_all(r, g, b);
         }
         const int64_t dim_until =
             (int64_t)CYBEER_LED_FINISHED_FLASH_US + (int64_t)CYBEER_LED_FINISHED_DIM_HOLD_US;
         if (dt < dim_until) {
-            return draw_all(38, 40, 42);
+            uint32_t r;
+            uint32_t g;
+            uint32_t b;
+            led_color(255, 38, 40, 42, &r, &g, &b);
+            return draw_all(r, g, b);
         }
         if (s_has_unclaimed_run) {
             return render_claim_pending(now_us);
@@ -165,8 +176,7 @@ static esp_err_t render_frame(int64_t now_us)
         uint32_t r;
         uint32_t g;
         uint32_t b;
-        const uint32_t bright = (uint32_t)s_led_brightness_base + 80;
-        rgb_scale(bright > 255 ? 255 : bright, 20, 255, 20, &r, &g, &b);
+        led_color(255, 20, 255, 20, &r, &g, &b);
         return draw_all(r, g, b);
     }
     case CYBEER_LED_FX_RUNNING: {
@@ -185,17 +195,13 @@ static esp_err_t render_frame(int64_t now_us)
             uint32_t gg;
             uint32_t bb;
             if (dist == 0) {
-                rr = 255;
-                gg = 100;
-                bb = 0;
+                led_color(255, 255, 100, 0, &rr, &gg, &bb);
             } else if (dist < tail_span) {
-                uint32_t falloff =
+                const uint32_t falloff =
                     ((uint32_t)(tail_span - dist) * 255 + (uint32_t)tail_span - 1u) / (uint32_t)tail_span;
-                rgb_scale(((uint32_t)s_led_brightness_base + 140) * falloff / 255, 255, 110, 0, &rr, &gg, &bb);
+                led_color(falloff, 255, 110, 0, &rr, &gg, &bb);
             } else {
-                rr = 0;
-                gg = 14;
-                bb = 8;
+                led_color(255, 0, 14, 8, &rr, &gg, &bb);
             }
             esp_err_t e = led_strip_set_pixel(s_strip, i, rr, gg, bb);
             if (e != ESP_OK) {
@@ -207,30 +213,28 @@ static esp_err_t render_frame(int64_t now_us)
     case CYBEER_LED_FX_CLAIM_PENDING:
         return render_claim_pending(now_us);
     case CYBEER_LED_FX_PODIUM: {
-        uint32_t br = (uint32_t)s_led_brightness_base + tri_wave(now_us, 200);
-        if (br > 255) {
-            br = 255;
-        }
+        const uint32_t wave = tri_wave(now_us, 200);
         uint32_t r;
         uint32_t g;
         uint32_t b;
-        rgb_scale(br, 255, 210, 32, &r, &g, &b);
+        led_color(wave, 255, 210, 32, &r, &g, &b);
         return draw_all(r, g, b);
     }
     case CYBEER_LED_FX_WIFI_SETUP: {
-        uint32_t br = (uint32_t)s_led_brightness_base / 3 + tri_wave(now_us, 380) * 170 / 255;
+        const uint32_t wave = tri_wave(now_us, 380);
+        const uint32_t effect_br = 96 + (wave * 159 / 255);
         uint32_t r;
         uint32_t g;
         uint32_t b;
-        rgb_scale(br, 24, 64, 255, &r, &g, &b);
+        led_color(effect_br, 24, 64, 255, &r, &g, &b);
         return draw_all(r, g, b);
     }
     case CYBEER_LED_FX_OTA_DOWNLOAD: {
-        uint32_t br = tri_wave(now_us, 1500);
+        const uint32_t wave = tri_wave(now_us, 1500);
         uint32_t r;
         uint32_t g;
         uint32_t b;
-        rgb_scale((uint32_t)s_led_brightness_base * br / 255, 0, 0, 255, &r, &g, &b);
+        led_color(wave, 0, 0, 255, &r, &g, &b);
         return draw_all(r, g, b);
     }
     case CYBEER_LED_FX_OTA_WRITE: {
@@ -249,17 +253,13 @@ static esp_err_t render_frame(int64_t now_us)
             uint32_t gg;
             uint32_t bb;
             if (dist == 0) {
-                rr = 0;
-                gg = 40;
-                bb = 255;
+                led_color(255, 0, 40, 255, &rr, &gg, &bb);
             } else if (dist < tail_span) {
-                uint32_t falloff =
+                const uint32_t falloff =
                     ((uint32_t)(tail_span - dist) * 255 + (uint32_t)tail_span - 1u) / (uint32_t)tail_span;
-                rgb_scale(((uint32_t)s_led_brightness_base + 140) * falloff / 255, 0, 40, 255, &rr, &gg, &bb);
+                led_color(falloff, 0, 40, 255, &rr, &gg, &bb);
             } else {
-                rr = 0;
-                gg = 4;
-                bb = 20;
+                led_color(255, 0, 4, 20, &rr, &gg, &bb);
             }
             esp_err_t e = led_strip_set_pixel(s_strip, i, rr, gg, bb);
             if (e != ESP_OK) {
@@ -272,7 +272,7 @@ static esp_err_t render_frame(int64_t now_us)
         uint32_t r;
         uint32_t g;
         uint32_t b;
-        rgb_scale((uint32_t)s_led_brightness_base, 0, 255, 0, &r, &g, &b);
+        led_color(255, 0, 255, 0, &r, &g, &b);
         return draw_all(r, g, b);
     }
     case CYBEER_LED_FX_OTA_FAIL: {
@@ -282,7 +282,7 @@ static esp_err_t render_frame(int64_t now_us)
             uint32_t r;
             uint32_t g;
             uint32_t b;
-            rgb_scale((uint32_t)s_led_brightness_base, 255, 0, 0, &r, &g, &b);
+            led_color(255, 255, 0, 0, &r, &g, &b);
             return draw_all(r, g, b);
         }
         return draw_all(0, 0, 0);

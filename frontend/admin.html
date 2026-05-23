@@ -106,9 +106,10 @@
           <label>Количество LED (1–64)
             <input type="number" name="ledCount" min="1" max="64" id="ledCountInput" />
           </label>
-          <label>Яркость (1–255)
-            <input type="number" name="brightness" min="1" max="255" id="ledBrightnessInput" />
+          <label>Общая яркость (1–100%)
+            <input type="number" name="brightness" min="1" max="100" id="ledBrightnessInput" />
           </label>
+          <p class="hint">Процент от максимальной яркости для всех LED-эффектов (ожидание, старт, бег, финиш, OTA).</p>
           <p class="hint">Устройство перезагрузится после сохранения.</p>
           <button type="submit">Сохранить и перезагрузить</button>
         </form>
