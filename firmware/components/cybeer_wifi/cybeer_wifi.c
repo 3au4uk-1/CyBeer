@@ -262,19 +262,18 @@ static const char *auth_mode_str(wifi_auth_mode_t mode)
 static esp_err_t h_get_scan(httpd_req_t *req)
 {
     wifi_mode_t mode = WIFI_MODE_NULL;
-    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_STA) {
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode == WIFI_MODE_NULL) {
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_send(req, "[]", HTTPD_RESP_USE_STRLEN);
     }
 
     /*
-     * Active scan blocks the Wi-Fi driver; connected SoftAP clients may drop.
-     * AP-only provisioning still needs scan — clients usually re-join after.
+     * Scan is allowed in STA and APSTA (admin panel reconfiguration).
+     * In APSTA, connected SoftAP clients may briefly drop during scan.
      */
     wifi_scan_config_t scan_cfg = {
         .show_hidden = false,
-        .scan_type = WIFI_SCAN_TYPE_PASSIVE,
-        .scan_time.passive = 300,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
     };
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
     if (err != ESP_OK) {
@@ -582,41 +581,54 @@ static void build_ap_ssid(char *out, size_t out_len)
     snprintf(out, out_len, "CyBeer-%02X%02X%02X", mac[3], mac[4], mac[5]);
 }
 
+static void build_ap_config(wifi_config_t *ap_cfg)
+{
+    build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
+    memset(ap_cfg, 0, sizeof(*ap_cfg));
+    strlcpy((char *)ap_cfg->ap.ssid, s_ap_ssid, sizeof(ap_cfg->ap.ssid));
+    ap_cfg->ap.ssid_len = (uint8_t)strlen((char *)ap_cfg->ap.ssid);
+    ap_cfg->ap.channel = 1;
+    ap_cfg->ap.max_connection = 10;
+    ap_cfg->ap.beacon_interval = 100;
+    ap_cfg->ap.authmode = WIFI_AUTH_OPEN;
+    ap_cfg->ap.password[0] = '\0';
+}
+
+static esp_err_t ensure_ap_netif(void)
+{
+    if (s_ap_netif != NULL) {
+        return ESP_OK;
+    }
+
+    s_ap_netif = esp_netif_create_default_wifi_ap();
+    if (s_ap_netif == NULL) {
+        ESP_LOGE(TAG, "ap netif create failed");
+        return ESP_FAIL;
+    }
+    return ap_netif_configure_dhcps(s_ap_netif);
+}
+
 static esp_err_t activate_fallback_ap(void)
 {
     if (s_fallback_ap_active) {
         return ESP_OK;
     }
 
-    ESP_LOGW(TAG, "STA failed %d times, activating fallback AP", STA_FALLBACK_AP_THRESHOLD);
+    ESP_LOGW(TAG, "STA failed %d times, marking fallback AP active", STA_FALLBACK_AP_THRESHOLD);
 
-    if (s_ap_netif == NULL) {
-        s_ap_netif = esp_netif_create_default_wifi_ap();
-        if (s_ap_netif == NULL) {
-            ESP_LOGE(TAG, "fallback: ap netif create failed");
-            return ESP_FAIL;
-        }
-        esp_err_t err = ap_netif_configure_dhcps(s_ap_netif);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "fallback: dhcps config failed: %s", esp_err_to_name(err));
-            return err;
-        }
+    esp_err_t err = ensure_ap_netif();
+    if (err != ESP_OK) {
+        return err;
     }
 
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "fallback: mode apsta");
-
-    build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
-    wifi_config_t ap_cfg = { 0 };
-    strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
-    ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
-    ap_cfg.ap.channel = 1;
-    ap_cfg.ap.max_connection = 10;
-    ap_cfg.ap.beacon_interval = 100;
-    ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
-    ap_cfg.ap.password[0] = '\0';
-
-    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "fallback: cfg ap");
-    (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
+    wifi_mode_t mode = WIFI_MODE_NULL;
+    if (esp_wifi_get_mode(&mode) != ESP_OK || mode != WIFI_MODE_APSTA) {
+        wifi_config_t ap_cfg;
+        build_ap_config(&ap_cfg);
+        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "fallback: mode apsta");
+        ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "fallback: cfg ap");
+        (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
+    }
 
     start_captive_dns_task();
     cybeer_led_set_fx(CYBEER_LED_FX_WIFI_SETUP);
@@ -641,7 +653,10 @@ esp_err_t cybeer_wifi_start(void)
         s_sta_netif = esp_netif_create_default_wifi_sta();
         ESP_RETURN_ON_FALSE(s_sta_netif != NULL, ESP_FAIL, TAG, "sta netif");
 
-        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "mode sta");
+        ESP_RETURN_ON_ERROR(ensure_ap_netif(), TAG, "ap netif");
+
+        wifi_config_t ap_cfg;
+        build_ap_config(&ap_cfg);
 
         wifi_config_t sta_cfg = { 0 };
         strlcpy((char *)sta_cfg.sta.ssid, sta_ssid, sizeof(sta_cfg.sta.ssid));
@@ -653,6 +668,8 @@ esp_err_t cybeer_wifi_start(void)
             sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
         }
 
+        ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "mode apsta");
+        ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg), TAG, "cfg ap");
         ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg), TAG, "cfg sta");
     } else {
         build_ap_ssid(s_ap_ssid, sizeof(s_ap_ssid));
@@ -662,14 +679,8 @@ esp_err_t cybeer_wifi_start(void)
 
         ESP_RETURN_ON_ERROR(ap_netif_configure_dhcps(s_ap_netif), TAG, "ap ip/dhcp");
 
-        wifi_config_t ap_cfg = { 0 };
-        strlcpy((char *)ap_cfg.ap.ssid, s_ap_ssid, sizeof(ap_cfg.ap.ssid));
-        ap_cfg.ap.ssid_len = (uint8_t)strlen((char *)ap_cfg.ap.ssid);
-        ap_cfg.ap.channel = 1;
-        ap_cfg.ap.max_connection = 10;
-        ap_cfg.ap.beacon_interval = 100;
-        ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
-        ap_cfg.ap.password[0] = '\0';
+        wifi_config_t ap_cfg;
+        build_ap_config(&ap_cfg);
 
         s_sta_netif = NULL;
         ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_AP), TAG, "mode ap");
@@ -680,7 +691,8 @@ esp_err_t cybeer_wifi_start(void)
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi_start");
 
     if (have_sta) {
-        ESP_LOGI(TAG, "STA-only mode");
+        (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
+        ESP_LOGI(TAG, "APSTA mode: STA \"%s\", AP \"%s\" @ 192.168.4.1", sta_ssid, s_ap_ssid);
     } else {
         (void)esp_wifi_set_inactive_time(WIFI_IF_AP, 65535);
         ESP_LOGI(TAG, "SoftAP SSID:%s IP 192.168.4.1/24 (open)", s_ap_ssid);
@@ -728,7 +740,10 @@ bool cybeer_wifi_sta_credentials_configured(void)
 
 bool cybeer_wifi_ap_is_fallback(void)
 {
-    return s_fallback_ap_active;
+    if (!cybeer_wifi_sta_credentials_configured()) {
+        return false;
+    }
+    return !s_sta_has_ip;
 }
 
 void cybeer_wifi_get_ap_ssid_str(char *buf, size_t len)
