@@ -273,12 +273,13 @@ static esp_err_t h_post_claim(httpd_req_t *req)
     const cJSON *jpid = cJSON_GetObjectItemCaseSensitive(root, "participantId");
     const char *arg = NULL;
     bool by_pid = false;
-    if (cJSON_IsString(jpid) && jpid->valuestring && jpid->valuestring[0] != '\0') {
-        arg = jpid->valuestring;
-        by_pid = true;
-    } else if (cJSON_IsString(jname) && jname->valuestring && jname->valuestring[0] != '\0') {
+    /* Prefer explicit name over participantId (form may send both). */
+    if (cJSON_IsString(jname) && jname->valuestring && jname->valuestring[0] != '\0') {
         arg = jname->valuestring;
         by_pid = false;
+    } else if (cJSON_IsString(jpid) && jpid->valuestring && jpid->valuestring[0] != '\0') {
+        arg = jpid->valuestring;
+        by_pid = true;
     }
     cJSON_Delete(root);
 

@@ -136,6 +136,19 @@ static void leave_idle_latched(void)
     ESP_LOGI(TAG, "idle wake OK");
 }
 
+static void apply_eco_display(bool on)
+{
+    if (on) {
+        cybeer_display_blank();
+        cybeer_led_prepare_sleep();
+    } else {
+        cybeer_display_show_zeros();
+        if (cybeer_led_strip_active()) {
+            cybeer_led_set_fx(CYBEER_LED_FX_ARMED);
+        }
+    }
+}
+
 void cybeer_power_note_activity(void)
 {
     s_last_activity_us = esp_timer_get_time();
@@ -153,6 +166,7 @@ bool cybeer_power_confirm_wake_or_sleep(void)
 {
     s_last_activity_us = esp_timer_get_time();
     s_idle_latched = false;
+    s_eco_mode = false;
     tap_reset();
     disable_gpio_wake_sources();
     return true;
@@ -196,77 +210,19 @@ bool cybeer_power_is_eco(void)
 bool cybeer_power_toggle_eco(void)
 {
     s_eco_mode = !s_eco_mode;
-    if (s_eco_mode) {
-        ESP_LOGI(TAG, "eco mode ON");
-        cybeer_display_blank();
-        cybeer_led_prepare_sleep();
-    } else {
-        ESP_LOGI(TAG, "eco mode OFF");
-        cybeer_display_show_zeros();
-        if (cybeer_led_strip_active()) {
-            cybeer_led_set_fx(CYBEER_LED_FX_ARMED);
-        }
+    ESP_LOGI(TAG, "eco mode %s", s_eco_mode ? "ON" : "OFF");
+    apply_eco_display(s_eco_mode);
+    if (!s_eco_mode) {
         cybeer_power_note_activity();
+    } else {
+        s_last_activity_us = esp_timer_get_time();
     }
     return s_eco_mode;
 }
 
-static void configure_light_sleep_gpio_wake(void)
-{
-    gpio_wakeup_enable((gpio_num_t)CYBEER_GPIO_SWITCH, GPIO_INTR_NEGEDGE);
-    ESP_ERROR_CHECK(esp_sleep_enable_gpio_wakeup());
-}
-
-static bool count_triple_tap_after_wake(void)
-{
-    tap_reset();
-    const int64_t deadline_us = esp_timer_get_time() + WAKE_WINDOW_US;
-    while (esp_timer_get_time() < deadline_us) {
-        if (tap_poll_step()) {
-            return true;
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    ESP_LOGW(TAG, "light sleep wake: triple-tap not completed");
-    return false;
-}
-
-static void enter_light_sleep_until_unlocked(void)
-{
-    ESP_LOGI(TAG, "entering light sleep (wake: %d taps on GPIO%d)",
-             CYBEER_WAKE_CLICK_COUNT, CYBEER_GPIO_SWITCH);
-
-    cybeer_display_blank();
-    cybeer_led_prepare_sleep();
-    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
-
-    for (;;) {
-        configure_light_sleep_gpio_wake();
-        esp_light_sleep_start();
-        disable_gpio_wake_sources();
-
-        if (count_triple_tap_after_wake()) {
-            esp_wifi_set_ps(WIFI_PS_NONE);
-            cybeer_power_note_activity();
-            cybeer_display_show_zeros();
-            if (cybeer_led_strip_active()) {
-                cybeer_led_set_fx(CYBEER_LED_FX_ARMED);
-            }
-            ESP_LOGI(TAG, "light sleep wake OK");
-            return;
-        }
-    }
-}
-
-static void sleep_task_fn(void *arg)
-{
-    (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(500));
-    enter_light_sleep_until_unlocked();
-    vTaskDelete(NULL);
-}
-
 void cybeer_power_trigger_sleep(void)
 {
-    xTaskCreate(sleep_task_fn, "cybeer_sleep", 3072, NULL, 5, NULL);
+    ESP_LOGI(TAG, "sleep requested — entering idle-latch (Wi-Fi stays up)");
+    s_last_activity_us = esp_timer_get_time();
+    enter_idle_latched();
 }

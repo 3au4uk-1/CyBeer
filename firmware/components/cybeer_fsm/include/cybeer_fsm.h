@@ -25,5 +25,7 @@ typedef struct {
 
 void cybeer_fsm_init(const cybeer_fsm_callbacks_t *callbacks);
 void cybeer_fsm_reset_to_prep(int64_t now_us);
+/** Boot / post-run idle: bottle away, zeros on display, wait for bottle placed. */
+void cybeer_fsm_reset_to_ready(int64_t now_us);
 void cybeer_fsm_on_switch_stable(bool pressed, int64_t now_us);
 cybeer_fsm_snapshot_t cybeer_fsm_snapshot(void);

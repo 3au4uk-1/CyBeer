@@ -437,6 +437,18 @@
     return runDuration;
   }
 
+  function buildClaimBody(sel, nameInput) {
+    const typed = nameInput?.value?.trim() || "";
+    const useExisting = sel?.value && (!typed || nameInput?.disabled);
+    if (useExisting) {
+      return { participantId: sel.value };
+    }
+    if (typed) {
+      return { name: typed };
+    }
+    return null;
+  }
+
   function populateClaimSelect(selectEl) {
     if (!selectEl) return Promise.resolve();
     while (selectEl.options.length > 1) {
@@ -455,6 +467,7 @@
           opt.textContent = p.name;
           selectEl.appendChild(opt);
         }
+        selectEl.selectedIndex = 0;
       })
       .catch(function () {});
   }
@@ -539,19 +552,13 @@
         return;
       }
 
-      let body;
-      if (sel?.value) {
-        body = { participantId: sel.value };
-      } else {
-        const name = nameInput?.value?.trim();
-        if (!name) {
-          if (msg) {
-            msg.textContent = "Выберите участника или введите имя.";
-            msg.classList.add("err");
-          }
-          return;
+      const body = buildClaimBody(sel, nameInput);
+      if (!body) {
+        if (msg) {
+          msg.textContent = "Выберите участника или введите имя.";
+          msg.classList.add("err");
         }
-        body = { name: name };
+        return;
       }
 
       try {
@@ -637,19 +644,13 @@
         return;
       }
 
-      let body;
-      if (sel.value) {
-        body = { participantId: sel.value };
-      } else {
-        const name = nameInput?.value?.trim();
-        if (!name) {
-          if (msg) {
-            msg.textContent = "Выберите участника или введите имя.";
-            msg.classList.add("err");
-          }
-          return;
+      const body = buildClaimBody(sel, nameInput);
+      if (!body) {
+        if (msg) {
+          msg.textContent = "Выберите участника или введите имя.";
+          msg.classList.add("err");
         }
-        body = { name: name };
+        return;
       }
 
       try {

@@ -23,6 +23,13 @@ void cybeer_fsm_reset_to_prep(int64_t now_us)
     s_finished_duration_us = 0;
 }
 
+void cybeer_fsm_reset_to_ready(int64_t now_us)
+{
+    cybeer_timer_stop(now_us);
+    s_state = CYBEER_STATE_READY;
+    s_finished_duration_us = 0;
+}
+
 void cybeer_fsm_on_switch_stable(bool pressed, int64_t now_us)
 {
     switch (s_state) {

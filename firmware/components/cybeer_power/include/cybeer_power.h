@@ -24,5 +24,5 @@ bool cybeer_power_toggle_eco(void);
 /** True when admin eco mode is active. */
 bool cybeer_power_is_eco(void);
 
-/** Enter light sleep until triple-tap wake (blocks; call from dedicated task). */
+/** Enter idle-latch immediately (display/LED off, triple-tap wake; Wi-Fi stays up). */
 void cybeer_power_trigger_sleep(void);

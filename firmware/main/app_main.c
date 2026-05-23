@@ -104,8 +104,9 @@ static void display_task(void *pvParameters)
 {
     (void)pvParameters;
 
-    cybeer_state_t fsm_prev = CYBEER_STATE_PREP;
+    cybeer_state_t fsm_prev = CYBEER_STATE_READY;
     int64_t last_display_us = 0;
+    bool switch_actuated = false;
 
     for (;;) {
         const int64_t now = esp_timer_get_time();
@@ -114,19 +115,25 @@ static void display_task(void *pvParameters)
         cybeer_switch_poll(now, &sw);
 
         if (cybeer_power_is_idle()) {
+            cybeer_power_poll();
             cybeer_power_maybe_sleep(cybeer_ota_is_active(), false);
             vTaskDelay(pdMS_TO_TICKS(25));
             continue;
         }
 
         if (sw.pressed_stable) {
-            if (cybeer_power_is_eco()) {
-                cybeer_power_toggle_eco();
-                cybeer_power_note_activity();
-            } else {
-                cybeer_power_note_activity();
-                cybeer_fsm_on_switch_stable(sw.pressed, now);
+            if (!switch_actuated) {
+                switch_actuated = true;
+                if (cybeer_power_is_eco()) {
+                    cybeer_power_toggle_eco();
+                    cybeer_power_note_activity();
+                } else {
+                    cybeer_power_note_activity();
+                    cybeer_fsm_on_switch_stable(sw.pressed, now);
+                }
             }
+        } else {
+            switch_actuated = false;
         }
 
         cybeer_fsm_snapshot_t snap = cybeer_fsm_snapshot();
@@ -139,7 +146,8 @@ static void display_task(void *pvParameters)
                 cybeer_ws_broadcast_state();
             }
             last_display_us = 0;
-            if (snap.state == CYBEER_STATE_PREP && !cybeer_power_is_eco()) {
+            if ((snap.state == CYBEER_STATE_PREP || snap.state == CYBEER_STATE_READY)
+                && !cybeer_power_is_eco()) {
                 cybeer_display_show_zeros();
                 last_display_us = now;
             }
@@ -238,7 +246,8 @@ void app_main(void)
         .user_ctx = NULL,
     };
     cybeer_fsm_init(&cb);
-    cybeer_fsm_reset_to_prep(esp_timer_get_time());
+    cybeer_fsm_reset_to_ready(esp_timer_get_time());
+    cybeer_display_show_zeros();
 
     ESP_ERROR_CHECK(cybeer_wifi_init());
     ESP_ERROR_CHECK(cybeer_web_start());
