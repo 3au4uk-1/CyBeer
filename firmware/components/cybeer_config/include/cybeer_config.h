@@ -3,6 +3,8 @@
 #define CYBEER_GPIO_SWITCH      9
 #define CYBEER_GPIO_TM1637_CLK  6
 #define CYBEER_GPIO_TM1637_DIO  7
+/** Set to 1 if the TM1637 module is mounted upside down (180°). */
+#define CYBEER_DISPLAY_FLIP     1
 #define CYBEER_GPIO_LED_DATA    8
 #define CYBEER_GPIO_BATTERY_ADC 0
 

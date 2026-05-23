@@ -62,18 +62,16 @@ jobs:
           export URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/cybeer-v${VERSION}.cyb"
           python3 << 'PY'
           import json, os
-          path = "version.json"
-          with open(path, encoding="utf-8") as f:
+          with open("version.json", encoding="utf-8") as f:
               data = json.load(f)
           data["version"] = os.environ["VERSION"]
           data["url"] = os.environ["URL"]
           data["size"] = int(os.environ["SIZE"])
           data["sha256"] = os.environ["SHA256"]
-          with open(path, "w", encoding="utf-8") as f:
+          with open("/tmp/version.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
               f.write("\n")
           PY
-          cp version.json /tmp/version.json
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin master

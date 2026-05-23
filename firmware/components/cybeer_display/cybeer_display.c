@@ -19,6 +19,33 @@ static const uint8_t s_digit_seg[10] = {
     0x6D, 0x7D, 0x07, 0x7F, 0x6F,
 };
 
+/** Rotate segment pattern 180° (a↔d, b↔e, c↔f; g and DP unchanged). */
+static uint8_t flip_seg(uint8_t seg)
+{
+    const uint8_t dp = seg & DIGIT_COLON_BIT;
+    const uint8_t body = seg & ~DIGIT_COLON_BIT;
+    const uint8_t a = body & 0x01;
+    const uint8_t b = (body >> 1) & 0x01;
+    const uint8_t c = (body >> 2) & 0x01;
+    const uint8_t d = (body >> 3) & 0x01;
+    const uint8_t e = (body >> 4) & 0x01;
+    const uint8_t f = (body >> 5) & 0x01;
+    const uint8_t g = (body >> 6) & 0x01;
+    const uint8_t flipped = (uint8_t)((d << 0) | (e << 1) | (f << 2) | (a << 3) | (b << 4) | (c << 5) | (g << 6));
+    return (uint8_t)(flipped | dp);
+}
+
+#if CYBEER_DISPLAY_FLIP
+static void orient_digits(const uint8_t in[4], uint8_t out[4])
+{
+    const uint8_t colon = in[1] & DIGIT_COLON_BIT;
+    out[0] = flip_seg(in[3]);
+    out[1] = flip_seg(in[2]);
+    out[2] = (uint8_t)(flip_seg(in[1] & ~DIGIT_COLON_BIT) | colon);
+    out[3] = flip_seg(in[0]);
+}
+#endif
+
 static inline void bit_delay(void)
 {
     esp_rom_delay_us(BIT_TIME_US);
@@ -74,6 +101,12 @@ static void write_byte(uint8_t byte)
 
 static void flush_digits(const uint8_t digits[4])
 {
+#if CYBEER_DISPLAY_FLIP
+    uint8_t oriented[4];
+    orient_digits(digits, oriented);
+    digits = oriented;
+#endif
+
     start();
     write_byte(TM1637_CMD_DATA_AUTO);
     stop();
