@@ -183,43 +183,32 @@ static void copy_path_no_query(const char *uri, char *out, size_t out_len)
     out[n] = '\0';
 }
 
-static bool parse_participant_stats_path(const char *path, char pid_out[40])
+/** /api/participants/{id}/stats or /runs — middle '*' is not supported by httpd_uri_match_wildcard. */
+static bool parse_participant_sub_path(const char *path, char pid_out[40], const char **suffix_out)
 {
     const char *pfx = "/api/participants/";
     if (strncmp(path, pfx, strlen(pfx)) != 0) {
         return false;
     }
     const char *rest = path + strlen(pfx);
-    const char *suf = strstr(rest, "/stats");
-    if (!suf || strcmp(suf, "/stats") != 0) {
+    const char *slash = strchr(rest, '/');
+    if (!slash || slash == rest) {
         return false;
     }
-    size_t id_len = (size_t)(suf - rest);
-    if (id_len == 0 || id_len >= 40) {
+    size_t id_len = (size_t)(slash - rest);
+    if (id_len == 0 || id_len >= 40 || strchr(rest, '/') != slash) {
         return false;
     }
     memcpy(pid_out, rest, id_len);
     pid_out[id_len] = '\0';
-    return strchr(pid_out, '/') == NULL;
+    *suffix_out = slash;
+    return true;
 }
 
-static esp_err_t h_get_participant_stats(httpd_req_t *req)
+static esp_err_t h_get_participant_stats_for_pid(httpd_req_t *req, const char *pid)
 {
-    char path[160];
-    copy_path_no_query(req->uri, path, sizeof(path));
-    char pid[40];
-    if (!parse_participant_stats_path(path, pid)) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_send(req, "{\"error\":\"uri\"}", HTTPD_RESP_USE_STRLEN);
-    }
-
     cybeer_stats_t st = { 0 };
-    if (cybeer_storage_get_participant_stats(pid, &st) != ESP_OK) {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_send(req, "{\"error\":\"storage\"}", HTTPD_RESP_USE_STRLEN);
-    }
+    (void)cybeer_storage_get_participant_stats(pid, &st);
 
     cJSON *root = cJSON_CreateObject();
     if (!root) {
@@ -375,31 +364,8 @@ static esp_err_t require_admin_pin(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t h_get_participant_runs(httpd_req_t *req)
+static esp_err_t h_get_participant_runs_for_pid(httpd_req_t *req, const char *pid)
 {
-    char path[160];
-    copy_path_no_query(req->uri, path, sizeof(path));
-
-    const char *pfx = "/api/participants/";
-    if (strncmp(path, pfx, strlen(pfx)) != 0) {
-        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
-    }
-    const char *rest = path + strlen(pfx);
-    const char *suf = strstr(rest, "/runs");
-    if (!suf || strcmp(suf, "/runs") != 0) {
-        return send_json_text(req, "400 Bad Request", "{\"error\":\"uri\"}");
-    }
-    size_t id_len = (size_t)(suf - rest);
-    if (id_len == 0 || id_len >= 40) {
-        return send_json_text(req, "400 Bad Request", "{\"error\":\"id\"}");
-    }
-    char pid[40];
-    memcpy(pid, rest, id_len);
-    pid[id_len] = '\0';
-    if (strchr(pid, '/') != NULL) {
-        return send_json_text(req, "400 Bad Request", "{\"error\":\"id\"}");
-    }
-
     const char *raw = cybeer_storage_runs_json();
     cJSON *arr = cJSON_Parse(raw && raw[0] ? raw : "[]");
     if (!arr || !cJSON_IsArray(arr)) {
@@ -436,6 +402,24 @@ static esp_err_t h_get_participant_runs(httpd_req_t *req)
     }
     cJSON_Delete(arr);
     return json_send(req, out);
+}
+
+static esp_err_t h_get_participant_sub(httpd_req_t *req)
+{
+    char path[160];
+    copy_path_no_query(req->uri, path, sizeof(path));
+    char pid[40];
+    const char *suffix = NULL;
+    if (!parse_participant_sub_path(path, pid, &suffix)) {
+        return send_json_text(req, "404 Not Found", "{\"error\":\"uri\"}");
+    }
+    if (strcmp(suffix, "/stats") == 0) {
+        return h_get_participant_stats_for_pid(req, pid);
+    }
+    if (strcmp(suffix, "/runs") == 0) {
+        return h_get_participant_runs_for_pid(req, pid);
+    }
+    return send_json_text(req, "404 Not Found", "{\"error\":\"uri\"}");
 }
 
 static esp_err_t h_post_admin_pin_verify(httpd_req_t *req)
@@ -1437,16 +1421,10 @@ esp_err_t cybeer_web_start(void)
     httpd_uri_t u_leaderboard = {
         .uri = "/api/leaderboard", .method = HTTP_GET, .handler = h_get_leaderboard, .user_ctx = NULL
     };
-    httpd_uri_t u_part_stats = {
-        .uri = "/api/participants/*/stats",
+    httpd_uri_t u_part_sub = {
+        .uri = "/api/participants/*",
         .method = HTTP_GET,
-        .handler = h_get_participant_stats,
-        .user_ctx = NULL
-    };
-    httpd_uri_t u_part_runs = {
-        .uri = "/api/participants/*/runs",
-        .method = HTTP_GET,
-        .handler = h_get_participant_runs,
+        .handler = h_get_participant_sub,
         .user_ctx = NULL
     };
     httpd_uri_t u_claim = { .uri = "/api/claim", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL };
@@ -1541,8 +1519,7 @@ esp_err_t cybeer_web_start(void)
         || httpd_register_uri_handler(s_server, &u_parts) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_parts_post) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_leaderboard) != ESP_OK
-        || httpd_register_uri_handler(s_server, &u_part_stats) != ESP_OK
-        || httpd_register_uri_handler(s_server, &u_part_runs) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_part_sub) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_rename) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_del) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK

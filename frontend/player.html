@@ -26,10 +26,12 @@
   <main>
     <section class="panel" id="playerPanel">
       <div class="player-card">
-        <h2 id="playerName">Загрузка…</h2>
-        <button type="button" id="renameBtn" class="btn-edit" hidden>Изменить имя</button>
+        <div class="player-title-row">
+          <h2 id="playerName">Загрузка…</h2>
+          <button type="button" id="renameBtn" class="btn-icon" hidden title="Изменить имя" aria-label="Изменить имя">✏️</button>
+        </div>
         <div id="renameForm" hidden>
-          <input type="text" id="renameInput" maxlength="32" placeholder="Новое имя" />
+          <input type="text" id="renameInput" maxlength="32" placeholder="Новое имя" autocomplete="off" />
           <button type="button" id="renameSave">Сохранить</button>
           <button type="button" id="renameCancel">Отмена</button>
           <p class="hint err" id="renameMsg"></p>
@@ -52,7 +54,6 @@
   </main>
 
   <style>
-    .btn-edit { font-size: 0.8rem; margin: 0.25rem 0 0.5rem; padding: 0.2rem 0.6rem; }
     #renameForm { margin: 0.5rem 0; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
     #renameForm input { flex: 1; min-width: 10rem; }
     #renameMsg { width: 100%; margin: 0; }
@@ -69,13 +70,7 @@
       return;
     }
 
-    cy.loadParticipants().then(function () {
-      var name = cy.nameByPid.get(id) || id.slice(0, 12) + "…";
-      document.getElementById("playerName").textContent = name;
-      document.title = "CyBeer — " + name;
-      document.getElementById("renameBtn").hidden = false;
-    });
-
+    var titleRow = document.querySelector(".player-title-row");
     var renameBtn = document.getElementById("renameBtn");
     var renameForm = document.getElementById("renameForm");
     var renameInput = document.getElementById("renameInput");
@@ -83,18 +78,28 @@
     var renameCancel = document.getElementById("renameCancel");
     var renameMsg = document.getElementById("renameMsg");
 
+    function showRename(show) {
+      if (titleRow) titleRow.hidden = show;
+      renameForm.hidden = !show;
+      if (!show) renameMsg.textContent = "";
+      else renameInput.focus();
+    }
+
+    cy.loadParticipants().then(function () {
+      var name = cy.nameByPid.get(id) || id.slice(0, 12) + "…";
+      document.getElementById("playerName").textContent = name;
+      document.title = "CyBeer — " + name;
+      renameBtn.hidden = false;
+    });
+
     renameBtn.addEventListener("click", function () {
-      renameBtn.hidden = true;
-      renameForm.hidden = false;
       renameInput.value = document.getElementById("playerName").textContent;
-      renameInput.focus();
       renameMsg.textContent = "";
+      showRename(true);
     });
 
     renameCancel.addEventListener("click", function () {
-      renameForm.hidden = true;
-      renameBtn.hidden = false;
-      renameMsg.textContent = "";
+      showRename(false);
     });
 
     renameSave.addEventListener("click", async function () {
@@ -114,17 +119,16 @@
           document.getElementById("playerName").textContent = newName;
           document.title = "CyBeer — " + newName;
           cy.nameByPid.set(id, newName);
-          renameForm.hidden = true;
-          renameBtn.hidden = false;
+          showRename(false);
+          return;
+        }
+        var data = await res.json().catch(function () { return {}; });
+        if (data.error === "name_taken") {
+          renameMsg.textContent = "Это имя уже занято";
+        } else if (data.error === "not_found") {
+          renameMsg.textContent = "Участник не найден";
         } else {
-          var data = await res.json().catch(function () { return {}; });
-          if (data.error === "name_taken") {
-            renameMsg.textContent = "Это имя уже занято";
-          } else if (data.error === "not_found") {
-            renameMsg.textContent = "Участник не найден";
-          } else {
-            renameMsg.textContent = "Ошибка: " + (data.error || res.status);
-          }
+          renameMsg.textContent = "Ошибка: " + (data.error || res.status);
         }
       } catch (_) {
         renameMsg.textContent = "Ошибка сети";
@@ -132,7 +136,10 @@
     });
 
     fetch("/api/participants/" + encodeURIComponent(id) + "/stats")
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("stats " + r.status);
+        return r.json();
+      })
       .then(function (st) {
         var grid = document.getElementById("statGrid");
         var items = [
@@ -175,7 +182,10 @@
       .catch(function () {});
 
     fetch("/api/participants/" + encodeURIComponent(id) + "/runs")
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("runs " + r.status);
+        return r.json();
+      })
       .then(function (runs) {
         var body = document.getElementById("playerRunsBody");
         if (!Array.isArray(runs) || runs.length === 0) {
@@ -185,12 +195,15 @@
         }
         body.innerHTML = "";
         for (var i = 0; i < runs.length; i++) {
+          var run = runs[i];
+          var dur = run.duration_us != null ? run.duration_us : run.durationUs;
+          var when = run.finished_at || run.finishedAt;
           var tr = document.createElement("tr");
           tr.innerHTML =
             "<td>" +
-            cy.formatDate(runs[i].finished_at) +
+            cy.formatDate(when) +
             "</td><td>" +
-            cy.formatDuration(runs[i].duration_us) +
+            cy.formatDuration(dur) +
             "</td>";
           body.appendChild(tr);
         }

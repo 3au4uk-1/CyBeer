@@ -617,10 +617,19 @@
       tr.dataset.participantId = p.id;
 
       const nameTd = document.createElement("td");
+      const nameRow = document.createElement("div");
+      nameRow.className = "participant-name-row";
       const nameSpan = document.createElement("span");
       nameSpan.className = "participant-name";
       nameSpan.textContent = p.name;
-      nameTd.appendChild(nameSpan);
+      const editIcon = document.createElement("button");
+      editIcon.type = "button";
+      editIcon.className = "btn-icon btn-edit-name";
+      editIcon.title = "Изменить имя";
+      editIcon.setAttribute("aria-label", "Изменить имя");
+      editIcon.textContent = "✏️";
+      nameRow.append(nameSpan, editIcon);
+      nameTd.appendChild(nameRow);
 
       const editWrap = document.createElement("div");
       editWrap.className = "participant-edit";
@@ -648,26 +657,20 @@
       profileLink.textContent = "Профиль";
       profileLink.className = "btn-link";
 
-      const editBtn = document.createElement("button");
-      editBtn.type = "button";
-      editBtn.className = "btn-edit";
-      editBtn.textContent = "Изменить";
-
       const delBtn = document.createElement("button");
       delBtn.type = "button";
       delBtn.className = "btn-danger";
       delBtn.textContent = "Удалить";
 
       function showEdit(show) {
-        nameSpan.hidden = show;
+        nameRow.hidden = show;
         editWrap.hidden = !show;
-        editBtn.hidden = show;
         delBtn.disabled = show;
         profileLink.style.pointerEvents = show ? "none" : "";
         if (show) editInput.focus();
       }
 
-      editBtn.addEventListener("click", function () {
+      editIcon.addEventListener("click", function () {
         setParticipantsMsg("");
         editInput.value = nameSpan.textContent;
         showEdit(true);
@@ -753,7 +756,7 @@
         }
       });
 
-      actionsTd.append(profileLink, editBtn, delBtn);
+      actionsTd.append(profileLink, delBtn);
       tr.append(nameTd, actionsTd);
       tbody.appendChild(tr);
     }

@@ -449,6 +449,46 @@ nav a.active {
   text-decoration: underline;
 }
 
+.participant-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.participant-name-row .participant-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-icon {
+  flex-shrink: 0;
+  padding: 0.15rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: var(--gold);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.btn-icon:hover,
+.btn-icon:focus-visible {
+  background: rgba(232, 180, 74, 0.12);
+  outline: none;
+}
+
+.player-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.player-title-row h2 {
+  margin: 0;
+}
+
 .participant-edit {
   display: flex;
   flex-wrap: wrap;
