@@ -10,6 +10,7 @@
 #include "cybeer_ws.h"
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -23,11 +24,12 @@
 #include "freertos/task.h"
 #include "mbedtls/private/sha256.h"
 
-#ifndef PROJECT_VER
-#define PROJECT_VER "unknown"
-#endif
-
 static const char *TAG = "cybeer_ota";
+
+const char *cybeer_firmware_version(void)
+{
+    return esp_app_get_description()->version;
+}
 
 #define OTA_BUF_SIZE           4096
 #define OTA_STACK_SIZE         (1024 * 12)
@@ -485,9 +487,10 @@ static esp_err_t h_get_ota_check(httpd_req_t *req)
     cJSON *size_item = cJSON_GetObjectItem(root, "size");
 
     cJSON *resp = cJSON_CreateObject();
-    cJSON_AddStringToObject(resp, "currentVersion", PROJECT_VER);
+    const char *current = cybeer_firmware_version();
+    cJSON_AddStringToObject(resp, "currentVersion", current);
     cJSON_AddStringToObject(resp, "remoteVersion", ver ? ver : "");
-    cJSON_AddBoolToObject(resp, "available", ver && version_is_newer(ver, PROJECT_VER));
+    cJSON_AddBoolToObject(resp, "available", ver && version_is_newer(ver, current));
     cJSON_AddStringToObject(resp, "changelog", changelog ? changelog : "");
     if (cJSON_IsNumber(size_item)) {
         cJSON_AddNumberToObject(resp, "size", size_item->valuedouble);

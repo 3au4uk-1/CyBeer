@@ -18,4 +18,7 @@ typedef struct {
     char version[32];
 } cybeer_ota_header_t;
 
+/** Running firmware version from the app descriptor (same as boot log). */
+const char *cybeer_firmware_version(void);
+
 esp_err_t cybeer_ota_register_handlers(httpd_handle_t server);
