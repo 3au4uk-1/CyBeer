@@ -3,7 +3,6 @@
 #include "cybeer_config.h"
 #include "cybeer_display.h"
 #include "cybeer_led.h"
-#include "cybeer_switch.h"
 
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -31,6 +30,12 @@ typedef enum {
 static bool switch_raw_pressed(void)
 {
     return gpio_get_level(CYBEER_GPIO_SWITCH) == 0;
+}
+
+static void disable_gpio_wake_sources(void)
+{
+    gpio_wakeup_disable((gpio_num_t)CYBEER_GPIO_SWITCH);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
 }
 
 static bool count_triple_tap(void)
@@ -87,27 +92,45 @@ static bool count_triple_tap(void)
     return false;
 }
 
-static void configure_gpio_wake(void)
+static void configure_light_sleep_gpio_wake(void)
 {
-    gpio_wakeup_enable((gpio_num_t)CYBEER_GPIO_SWITCH, GPIO_INTR_LOW_LEVEL);
+    gpio_wakeup_enable((gpio_num_t)CYBEER_GPIO_SWITCH, GPIO_INTR_NEGEDGE);
     ESP_ERROR_CHECK(esp_sleep_enable_gpio_wakeup());
 }
 
-static void enter_deep_sleep_now(void)
+/**
+ * GPIO9 is not an RTC pin on ESP32-C3 — deep-sleep GPIO wake only works on GPIO0–5.
+ * Light sleep supports GPIO9; we use that for idle power-down instead of deep sleep.
+ */
+static void enter_idle_sleep_until_unlocked(void)
 {
-    ESP_LOGI(TAG, "entering deep sleep (wake: %d taps on GPIO%d)",
+    if (!esp_sleep_is_valid_wakeup_gpio((gpio_num_t)CYBEER_GPIO_SWITCH)) {
+        ESP_LOGI(TAG,
+                 "GPIO%d: light-sleep wake (deep-sleep GPIO wake is GPIO0–5 only on ESP32-C3)",
+                 CYBEER_GPIO_SWITCH);
+    }
+
+    ESP_LOGI(TAG, "entering light sleep (wake: %d taps on GPIO%d)",
              CYBEER_WAKE_CLICK_COUNT, CYBEER_GPIO_SWITCH);
 
     cybeer_display_blank();
     cybeer_led_prepare_sleep();
 
-    esp_err_t werr = esp_wifi_stop();
-    if (werr != ESP_OK && werr != ESP_ERR_WIFI_NOT_INIT) {
-        ESP_LOGW(TAG, "esp_wifi_stop: %s", esp_err_to_name(werr));
-    }
+    esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 
-    configure_gpio_wake();
-    esp_deep_sleep_start();
+    for (;;) {
+        configure_light_sleep_gpio_wake();
+        esp_light_sleep_start();
+        disable_gpio_wake_sources();
+
+        if (count_triple_tap()) {
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            cybeer_power_note_activity();
+            cybeer_display_show_zeros();
+            ESP_LOGI(TAG, "wake unlock OK");
+            return;
+        }
+    }
 }
 
 void cybeer_power_note_activity(void)
@@ -118,22 +141,8 @@ void cybeer_power_note_activity(void)
 bool cybeer_power_confirm_wake_or_sleep(void)
 {
     s_last_activity_us = esp_timer_get_time();
-
-    const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (cause != ESP_SLEEP_WAKEUP_GPIO) {
-        return true;
-    }
-
-    ESP_LOGI(TAG, "GPIO wake — need %d taps within %d ms",
-             CYBEER_WAKE_CLICK_COUNT, CYBEER_WAKE_CLICK_WINDOW_MS);
-
-    if (count_triple_tap()) {
-        cybeer_power_note_activity();
-        return true;
-    }
-
-    enter_deep_sleep_now();
-    return false;
+    disable_gpio_wake_sources();
+    return true;
 }
 
 void cybeer_power_maybe_sleep(bool ota_active, bool timer_running)
@@ -151,5 +160,5 @@ void cybeer_power_maybe_sleep(bool ota_active, bool timer_running)
         return;
     }
 
-    enter_deep_sleep_now();
+    enter_idle_sleep_until_unlocked();
 }

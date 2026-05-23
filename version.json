@@ -1,7 +1,7 @@
 {
-  "version": "1.1.12",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.12/cybeer-v1.1.12.cyb",
+  "version": "1.1.13",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.13/cybeer-v1.1.13.cyb",
   "size": 0,
   "sha256": "",
-  "changelog": "Deep sleep после 5 мин бездействия. Пробуждение тремя короткими нажатиями на GPIO9."
+  "changelog": "Light sleep вместо deep sleep на GPIO9 (ESP32-C3: wake только GPIO0–5). Wi-Fi не отключается при сне."
 }

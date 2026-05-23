@@ -7,14 +7,14 @@
 void cybeer_power_note_activity(void);
 
 /**
- * After deep sleep GPIO wake: require triple tap on CYBEER_GPIO_SWITCH.
- * On failure enters deep sleep again (does not return).
- * On cold boot / reset returns true immediately.
+ * Idle light sleep after CYBEER_IDLE_SLEEP_MS without switch/FSM activity.
+ * Wake on GPIO9 (short taps); three taps within the window unlock normal operation.
+ * ESP32-C3 deep-sleep GPIO wake is limited to GPIO0–5, so light sleep is used for GPIO9.
  */
 bool cybeer_power_confirm_wake_or_sleep(void);
 
 /**
- * Enter deep sleep if idle timeout elapsed and device may sleep.
- * Does not return when sleeping.
+ * Enter light sleep if idle timeout elapsed. Blocks until triple-tap wake unlock.
+ * Does not return while sleeping.
  */
 void cybeer_power_maybe_sleep(bool ota_active, bool timer_running);
