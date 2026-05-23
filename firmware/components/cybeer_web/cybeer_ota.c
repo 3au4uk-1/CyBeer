@@ -145,6 +145,38 @@ static bool parse_header(const uint8_t *data, cybeer_ota_header_t *hdr)
     return true;
 }
 
+static bool ota_partitions_ready(void)
+{
+    const esp_partition_t *otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                              ESP_PARTITION_SUBTYPE_DATA_OTA,
+                                                              NULL);
+    if (!otadata) {
+        ESP_LOGE(TAG, "otadata partition missing — reflash partition table via USB");
+        return false;
+    }
+    if (!esp_ota_get_next_update_partition(NULL)) {
+        ESP_LOGE(TAG, "no OTA app slot available");
+        return false;
+    }
+    return true;
+}
+
+static const char *ota_err_user_message(esp_err_t err)
+{
+    switch (err) {
+    case ESP_ERR_INVALID_ARG:
+        return "invalid bundle format";
+    case ESP_ERR_INVALID_CRC:
+        return "SHA-256 mismatch";
+    case ESP_ERR_INVALID_SIZE:
+        return "file too large for device";
+    case ESP_ERR_NOT_FOUND:
+        return "OTA not configured (missing otadata). Reflash via USB";
+    default:
+        return "flash write error";
+    }
+}
+
 static esp_err_t ota_stream_init(ota_stream_ctx_t *ctx)
 {
     memset(ctx, 0, sizeof(*ctx));
@@ -183,6 +215,10 @@ static esp_err_t ota_stream_feed(ota_stream_ctx_t *ctx, const uint8_t *data, siz
         }
         ctx->header_parsed = true;
         ctx->total_size = ctx->hdr.firmware_size + ctx->hdr.littlefs_size;
+
+        if (!ota_partitions_ready()) {
+            return ESP_ERR_NOT_FOUND;
+        }
 
         ctx->ota_part = esp_ota_get_next_update_partition(NULL);
         if (!ctx->ota_part) {
@@ -542,9 +578,7 @@ static void ota_download_task(void *arg)
     free(args);
 
     if (err != ESP_OK) {
-        const char *msg = (err == ESP_ERR_INVALID_ARG) ? "invalid bundle format"
-                          : (err == ESP_ERR_INVALID_CRC) ? "SHA-256 mismatch"
-                          : "download/flash error";
+        const char *msg = ota_err_user_message(err);
         ota_broadcast_error(msg);
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         xSemaphoreGive(s_ota_mx);
@@ -668,9 +702,7 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
     ota_stream_cleanup(&ctx);
 
     if (err != ESP_OK) {
-        const char *msg = (err == ESP_ERR_INVALID_ARG) ? "invalid bundle format"
-                          : (err == ESP_ERR_INVALID_CRC) ? "SHA-256 mismatch"
-                          : "flash write error";
+        const char *msg = ota_err_user_message(err);
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         ota_broadcast_error(msg);
         xSemaphoreGive(s_ota_mx);
