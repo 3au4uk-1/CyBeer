@@ -1,7 +1,7 @@
 {
-  "version": "1.1.8",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.8/cybeer-v1.1.8.cyb",
-  "size": 1458685,
-  "sha256": "076084d8735ad5fb3fc0b12972549dc1c1d7cf4c19c98514ec9d6a650a06a097",
-  "changelog": "Исправлено отображение версии прошивки в админке (было unknown)"
+  "version": "1.1.10",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.10/cybeer-v1.1.10.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "Исправлена привязка заезда (POST /api/claim). OTA с GitHub: редиректы, проверка HTTP, прогресс скачивания."
 }

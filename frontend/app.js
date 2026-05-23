@@ -409,14 +409,20 @@
   }
 
   async function submitClaimRun(runId, runDuration, body) {
-    const resp = await fetch("/api/runs/" + encodeURIComponent(runId) + "/claim", {
+    const payload = Object.assign({ runId: runId }, body);
+    const resp = await fetch("/api/claim", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
     const txt = await resp.text();
     if (!resp.ok) {
-      throw new Error(txt || resp.statusText);
+      let msg = txt || resp.statusText;
+      try {
+        const j = JSON.parse(txt);
+        if (j.error) msg = j.error;
+      } catch (_) {}
+      throw new Error(msg);
     }
     lastUnclaimedRunId = null;
     lastUnclaimedDurationUs = null;

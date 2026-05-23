@@ -485,6 +485,8 @@ const OTA_STAGE_NAMES = {
   receiving: "Получение...",
   firmware: "Запись прошивки...",
   littlefs: "Запись интерфейса...",
+  error: "Ошибка",
+  done: "Готово",
 };
 
 let otaPollTimer = null;
@@ -496,6 +498,9 @@ function otaApplyProgress(data) {
   }
   if (typeof data.percent === "number") {
     document.getElementById("otaBar").value = data.percent;
+  }
+  if (data.error) {
+    document.getElementById("otaErrMsg").textContent = data.error;
   }
 }
 
@@ -514,9 +519,9 @@ function otaStartPolling() {
       if (!res.ok) return;
       const data = await res.json();
       otaApplyProgress(data);
-      if (data.error) {
+      if (data.error || data.stage === "error") {
         otaStopPolling();
-        otaShowError(data.error);
+        otaShowError(data.error || "Ошибка обновления");
       } else if (data.stage === "done") {
         otaStopPolling();
         document.getElementById("otaStage").textContent = "Обновлено! Перезагрузка...";

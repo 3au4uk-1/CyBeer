@@ -229,29 +229,32 @@ static esp_err_t h_post_claim(httpd_req_t *req)
 {
     char path[160];
     copy_path_no_query(req->uri, path, sizeof(path));
+    const bool claim_api = (strcmp(path, "/api/claim") == 0);
 
-    const char *prefix = "/api/runs/";
-    if (strncmp(path, prefix, strlen(prefix)) != 0) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_send(req, "{\"error\":\"uri\"}", HTTPD_RESP_USE_STRLEN);
+    char run_id[40] = { 0 };
+    if (!claim_api) {
+        const char *prefix = "/api/runs/";
+        if (strncmp(path, prefix, strlen(prefix)) != 0) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_send(req, "{\"error\":\"uri\"}", HTTPD_RESP_USE_STRLEN);
+        }
+        const char *id_start = path + strlen(prefix);
+        const char *claim = strstr(id_start, "/claim");
+        if (!claim || strcmp(claim, "/claim") != 0) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_send(req, "{\"error\":\"uri\"}", HTTPD_RESP_USE_STRLEN);
+        }
+        size_t id_len = (size_t)(claim - id_start);
+        if (id_len == 0 || id_len >= sizeof(run_id)) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_send(req, "{\"error\":\"id\"}", HTTPD_RESP_USE_STRLEN);
+        }
+        memcpy(run_id, id_start, id_len);
+        run_id[id_len] = '\0';
     }
-    const char *id_start = path + strlen(prefix);
-    const char *claim = strstr(id_start, "/claim");
-    if (!claim || strcmp(claim, "/claim") != 0) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_send(req, "{\"error\":\"uri\"}", HTTPD_RESP_USE_STRLEN);
-    }
-    size_t id_len = (size_t)(claim - id_start);
-    if (id_len == 0 || id_len >= 40) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_set_type(req, "application/json");
-        return httpd_resp_send(req, "{\"error\":\"id\"}", HTTPD_RESP_USE_STRLEN);
-    }
-    char run_id[40];
-    memcpy(run_id, id_start, id_len);
-    run_id[id_len] = '\0';
 
     if (req->content_len <= 0 || req->content_len > 512) {
         httpd_resp_set_status(req, "400 Bad Request");
@@ -273,6 +276,18 @@ static esp_err_t h_post_claim(httpd_req_t *req)
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_send(req, "{\"error\":\"json\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    if (claim_api) {
+        const cJSON *jrid = cJSON_GetObjectItemCaseSensitive(root, "runId");
+        if (!cJSON_IsString(jrid) || !jrid->valuestring || jrid->valuestring[0] == '\0'
+            || strlen(jrid->valuestring) >= sizeof(run_id)) {
+            cJSON_Delete(root);
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_send(req, "{\"error\":\"runId\"}", HTTPD_RESP_USE_STRLEN);
+        }
+        strncpy(run_id, jrid->valuestring, sizeof(run_id) - 1);
     }
 
     const cJSON *jname = cJSON_GetObjectItemCaseSensitive(root, "name");
@@ -1261,7 +1276,10 @@ esp_err_t cybeer_web_start(void)
         .handler = h_get_participant_runs,
         .user_ctx = NULL
     };
-    httpd_uri_t u_claim = { .uri = "/api/runs/*/claim", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL };
+    httpd_uri_t u_claim = { .uri = "/api/claim", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL };
+    httpd_uri_t u_claim_legacy = {
+        .uri = "/api/runs/*", .method = HTTP_POST, .handler = h_post_claim, .user_ctx = NULL
+    };
     httpd_uri_t u_admin_pin = {
         .uri = "/api/admin/pin/setup", .method = HTTP_POST, .handler = h_post_admin_pin_setup, .user_ctx = NULL
     };
@@ -1340,6 +1358,7 @@ esp_err_t cybeer_web_start(void)
         || httpd_register_uri_handler(s_server, &u_part_stats) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_part_runs) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_claim) != ESP_OK
+        || httpd_register_uri_handler(s_server, &u_claim_legacy) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_active_pub) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_assign) != ESP_OK
         || httpd_register_uri_handler(s_server, &u_tor_start) != ESP_OK

@@ -119,6 +119,40 @@
 
   let currentFsmState = "PREP";
   let lastFinishedDurationUs = null;
+  let lastUnclaimedRunId = null;
+  let lastUnclaimedDurationUs = null;
+
+  function syncUnclaimedFromStatus(st) {
+    if (!st) return;
+    if (st.unclaimedRunId) {
+      lastUnclaimedRunId = st.unclaimedRunId;
+      if (typeof st.unclaimedRunDurationUs === "number") {
+        lastUnclaimedDurationUs = st.unclaimedRunDurationUs;
+        lastFinishedDurationUs = st.unclaimedRunDurationUs;
+      }
+    }
+  }
+
+  function updateClaimableUi() {
+    const hero = document.getElementById("timerHero");
+    const hint = document.getElementById("timerHint");
+    if (!hero) return;
+
+    const claimable =
+      !!lastUnclaimedRunId &&
+      (currentFsmState === "FINISHED" || currentFsmState === "READY");
+
+    hero.classList.toggle("claimable", claimable);
+    if (hint) {
+      if (claimable) {
+        hint.hidden = false;
+        hint.textContent = "Нажмите, чтобы привязать участника";
+      } else {
+        hint.hidden = true;
+        hint.textContent = "";
+      }
+    }
+  }
 
   function updateTimerHero(state, durationUs) {
     const hero = document.getElementById("timerHero");
@@ -132,8 +166,8 @@
     const labels = {
       PREP: "Готов к старту",
       RUNNING: "",
-      FINISHED: "Ожидает заявки",
-      READY: "Последний результат",
+      FINISHED: lastUnclaimedRunId ? "Сохранён, не привязан" : "Ожидает сохранения",
+      READY: lastUnclaimedRunId ? "Сохранён, не привязан" : "Последний результат",
     };
     if (lbl) lbl.textContent = labels[state] || "";
 
@@ -142,8 +176,16 @@
     } else if (state === "RUNNING") {
       if (typeof durationUs === "number") val.textContent = formatDuration(durationUs);
     } else if (state === "FINISHED" || state === "READY") {
-      if (typeof durationUs === "number") val.textContent = formatDuration(durationUs);
+      const dur =
+        typeof durationUs === "number"
+          ? durationUs
+          : lastUnclaimedDurationUs != null
+            ? lastUnclaimedDurationUs
+            : lastFinishedDurationUs;
+      if (typeof dur === "number") val.textContent = formatDuration(dur);
     }
+
+    updateClaimableUi();
   }
 
   /* ========== Leaderboard ========== */
@@ -243,12 +285,15 @@
     let ws;
     let reconnectTimer;
 
+    let reconnectDelayMs = 2000;
+
     function scheduleReconnect() {
       if (reconnectTimer) return;
       reconnectTimer = window.setTimeout(function () {
         reconnectTimer = null;
         connectLiveWs();
-      }, 2000);
+        reconnectDelayMs = Math.min(reconnectDelayMs * 2, 15000);
+      }, reconnectDelayMs);
     }
 
     try {
@@ -259,6 +304,7 @@
     }
 
     ws.onopen = function () {
+      reconnectDelayMs = 2000;
       try {
         ws.send(".");
       } catch (_) {}
@@ -269,6 +315,10 @@
       try {
         msg = JSON.parse(ev.data);
       } catch (_) {
+        return;
+      }
+      if (typeof otaHandleWsMessage === "function" && (msg.type === "ota_progress" || msg.type === "ota_done" || msg.type === "ota_error")) {
+        otaHandleWsMessage(msg);
         return;
       }
       if (!msg || typeof msg.type !== "string") return;
@@ -290,15 +340,27 @@
         if (msg.state === "PREP") {
           updateTimerHero("PREP", 0);
         } else if (msg.state !== "RUNNING") {
-          updateTimerHero(msg.state, lastFinishedDurationUs);
+          updateTimerHero(msg.state, lastUnclaimedDurationUs != null ? lastUnclaimedDurationUs : lastFinishedDurationUs);
+          if ((msg.state === "FINISHED" || msg.state === "READY") && !lastUnclaimedRunId) {
+            pollUnclaimedFromStatus();
+          }
         }
         return;
       }
       if (msg.type === "runFinished") {
         lastFinishedDurationUs = msg.durationUs;
+        if (typeof msg.durationUs === "number") {
+          lastUnclaimedDurationUs = msg.durationUs;
+        }
+        if (msg.runId) {
+          lastUnclaimedRunId = msg.runId;
+        }
         updateTimerHero("FINISHED", msg.durationUs);
         playFanfare();
         loadLeaderboard();
+        if (!msg.runId) {
+          pollUnclaimedFromStatus();
+        }
 
         const targetEl = document.getElementById("targetRunTime");
         if (targetEl && typeof msg.durationUs === "number") {
@@ -324,6 +386,178 @@
         ws.close();
       } catch (_) {}
     };
+  }
+
+  /* ========== Claim (shared) ========== */
+
+  async function pollUnclaimedFromStatus(attemptsLeft) {
+    const left = typeof attemptsLeft === "number" ? attemptsLeft : 8;
+    try {
+      const rs = await fetch("/api/status");
+      const st = await rs.json();
+      syncUnclaimedFromStatus(st);
+      if (lastUnclaimedRunId) {
+        updateTimerHero(currentFsmState, lastUnclaimedDurationUs);
+        return;
+      }
+      if (left > 0 && (currentFsmState === "FINISHED" || currentFsmState === "READY")) {
+        window.setTimeout(function () {
+          pollUnclaimedFromStatus(left - 1);
+        }, 400);
+      }
+    } catch (_) {}
+  }
+
+  async function submitClaimRun(runId, runDuration, body) {
+    const payload = Object.assign({ runId: runId }, body);
+    const resp = await fetch("/api/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const txt = await resp.text();
+    if (!resp.ok) {
+      let msg = txt || resp.statusText;
+      try {
+        const j = JSON.parse(txt);
+        if (j.error) msg = j.error;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+    lastUnclaimedRunId = null;
+    lastUnclaimedDurationUs = null;
+    updateTimerHero(currentFsmState, runDuration);
+    await loadLeaderboard();
+    return runDuration;
+  }
+
+  function populateClaimSelect(selectEl) {
+    if (!selectEl) return Promise.resolve();
+    while (selectEl.options.length > 1) {
+      selectEl.remove(1);
+    }
+    return fetch("/api/participants")
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        if (!Array.isArray(data)) return;
+        for (const p of data) {
+          if (!p || !p.id || !p.name) continue;
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = p.name;
+          selectEl.appendChild(opt);
+        }
+      })
+      .catch(function () {});
+  }
+
+  function initClaimModal() {
+    const modal = document.getElementById("claimModal");
+    const hero = document.getElementById("timerHero");
+    const form = document.getElementById("claimModalForm");
+    const sel = document.getElementById("claimModalSelect");
+    const nameInput = document.getElementById("claimModalName");
+    const msg = document.getElementById("claimModalMsg");
+    const timeEl = document.getElementById("claimModalTime");
+    const cancelBtn = document.getElementById("claimModalCancel");
+    if (!modal || !hero || !form) return;
+
+    function closeModal() {
+      modal.hidden = true;
+      if (msg) {
+        msg.textContent = "";
+        msg.classList.remove("err");
+      }
+    }
+
+    function openModal() {
+      if (!lastUnclaimedRunId) return;
+      const dur = lastUnclaimedDurationUs != null ? lastUnclaimedDurationUs : lastFinishedDurationUs;
+      if (timeEl && typeof dur === "number") {
+        timeEl.textContent = formatDuration(dur);
+      }
+      if (sel) sel.value = "";
+      if (nameInput) {
+        nameInput.value = "";
+        nameInput.disabled = false;
+      }
+      populateClaimSelect(sel);
+      modal.hidden = false;
+      if (nameInput) nameInput.focus();
+    }
+
+    hero.addEventListener("click", function () {
+      if (lastUnclaimedRunId && (currentFsmState === "FINISHED" || currentFsmState === "READY")) {
+        openModal();
+      }
+    });
+    hero.addEventListener("keydown", function (ev) {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      if (lastUnclaimedRunId && (currentFsmState === "FINISHED" || currentFsmState === "READY")) {
+        openModal();
+      }
+    });
+
+    cancelBtn?.addEventListener("click", closeModal);
+    modal.addEventListener("click", function (ev) {
+      if (ev.target === modal) closeModal();
+    });
+
+    sel?.addEventListener("change", function () {
+      if (!nameInput) return;
+      if (sel.value) {
+        nameInput.value = "";
+        nameInput.disabled = true;
+      } else {
+        nameInput.disabled = false;
+      }
+    });
+
+    form.addEventListener("submit", async function (ev) {
+      ev.preventDefault();
+      if (msg) {
+        msg.textContent = "";
+        msg.classList.remove("err");
+      }
+
+      const runId = lastUnclaimedRunId;
+      const runDuration = lastUnclaimedDurationUs != null ? lastUnclaimedDurationUs : lastFinishedDurationUs;
+      if (!runId) {
+        if (msg) {
+          msg.textContent = "Нет сохранённого заезда.";
+          msg.classList.add("err");
+        }
+        return;
+      }
+
+      let body;
+      if (sel?.value) {
+        body = { participantId: sel.value };
+      } else {
+        const name = nameInput?.value?.trim();
+        if (!name) {
+          if (msg) {
+            msg.textContent = "Выберите участника или введите имя.";
+            msg.classList.add("err");
+          }
+          return;
+        }
+        body = { name: name };
+      }
+
+      try {
+        await submitClaimRun(runId, runDuration, body);
+        closeModal();
+      } catch (e) {
+        if (msg) {
+          msg.textContent = String(e.message || e);
+          msg.classList.add("err");
+        }
+      }
+    });
   }
 
   /* ========== Claim page ========== */
@@ -386,6 +620,7 @@
       }
       const rs = await fetch("/api/status");
       const status = await rs.json();
+      syncUnclaimedFromStatus(status);
       const runId = status.unclaimedRunId;
       const runDuration = status.unclaimedRunDurationUs;
       if (!runId) {
@@ -412,19 +647,7 @@
       }
 
       try {
-        const resp = await fetch("/api/runs/" + encodeURIComponent(runId) + "/claim", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const txt = await resp.text();
-        if (!resp.ok) {
-          if (msg) {
-            msg.textContent = txt || resp.statusText;
-            msg.classList.add("err");
-          }
-          return;
-        }
+        await submitClaimRun(runId, runDuration, body);
         if (msg) {
           msg.textContent = "Заявлено! Ваш результат: " + formatDuration(runDuration);
           msg.classList.remove("err");
@@ -457,16 +680,22 @@
     if (page === "index") {
       loadLeaderboard();
       connectLiveWs();
+      initClaimModal();
       fetch("/api/status")
         .then(function (r) {
           return r.json();
         })
         .then(function (st) {
           renderStatus(st);
+          syncUnclaimedFromStatus(st);
           var dur = null;
-          if (st.state === "FINISHED" && typeof st.unclaimedRunDurationUs === "number") {
+          if (
+            (st.state === "FINISHED" || st.state === "READY") &&
+            typeof st.unclaimedRunDurationUs === "number"
+          ) {
             dur = st.unclaimedRunDurationUs;
-            lastFinishedDurationUs = dur;
+          } else if (st.state === "FINISHED" || st.state === "READY") {
+            dur = lastFinishedDurationUs;
           }
           updateTimerHero(st.state || "PREP", dur);
         })
@@ -475,6 +704,8 @@
       tickClaimTarget();
       setInterval(tickClaimTarget, 5000);
       initClaimForm();
+      connectLiveWs();
+    } else if (page === "admin") {
       connectLiveWs();
     }
   }

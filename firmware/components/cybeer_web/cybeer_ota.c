@@ -32,7 +32,7 @@ const char *cybeer_firmware_version(void)
 }
 
 #define OTA_BUF_SIZE           4096
-#define OTA_STACK_SIZE         (1024 * 12)
+#define OTA_STACK_SIZE         (1024 * 16)
 #define OTA_MANIFEST_MAX_SIZE  2048
 #define OTA_MAX_FIRMWARE_SIZE  0x140000
 #define OTA_MAX_LITTLEFS_SIZE  0x30000
@@ -192,6 +192,10 @@ static const char *ota_err_user_message(esp_err_t err)
         return "file too large for device";
     case ESP_ERR_NOT_FOUND:
         return "OTA not configured (missing otadata). Reflash via USB";
+    case ESP_ERR_INVALID_STATE:
+        return "download incomplete";
+    case ESP_FAIL:
+        return "download failed";
     default:
         return "flash write error";
     }
@@ -482,6 +486,8 @@ static esp_err_t fetch_manifest(char **out_manifest)
         .url = CYBEER_OTA_MANIFEST_URL,
         .timeout_ms = 10000,
         .crt_bundle_attach = esp_crt_bundle_attach,
+        .user_agent = "CyBeer/OTA",
+        .max_redirection_count = 10,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
@@ -494,7 +500,16 @@ static esp_err_t fetch_manifest(char **out_manifest)
         return err;
     }
 
-    int content_length = esp_http_client_fetch_headers(client);
+    (void)esp_http_client_fetch_headers(client);
+    int status = esp_http_client_get_status_code(client);
+    if (status != 200) {
+        ESP_LOGE(TAG, "manifest HTTP %d", status);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    int content_length = esp_http_client_get_content_length(client);
     if (content_length <= 0 || content_length > OTA_MANIFEST_MAX_SIZE) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
@@ -605,9 +620,11 @@ static void ota_download_task(void *arg)
 
     esp_http_client_config_t cfg = {
         .url = args->url,
-        .timeout_ms = 60000,
+        .timeout_ms = 120000,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = OTA_BUF_SIZE,
+        .user_agent = "CyBeer/OTA",
+        .max_redirection_count = 10,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
@@ -631,6 +648,22 @@ static void ota_download_task(void *arg)
     }
     (void)esp_http_client_fetch_headers(client);
 
+    int status = esp_http_client_get_status_code(client);
+    if (status != 200) {
+        ESP_LOGE(TAG, "bundle HTTP %d", status);
+        ota_broadcast_error("bad HTTP status from server");
+        cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        free(args);
+        xSemaphoreGive(s_ota_mx);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    int content_len = esp_http_client_get_content_length(client);
+    ESP_LOGI(TAG, "HTTP %d, Content-Length: %d", status, content_len);
+
     ota_stream_ctx_t ctx;
     err = ota_stream_init(&ctx);
     if (err != ESP_OK) {
@@ -645,6 +678,8 @@ static void ota_download_task(void *arg)
     }
 
     uint8_t buf[OTA_BUF_SIZE];
+    size_t downloaded = 0;
+    int last_dl_pct = -1;
     while (err == ESP_OK) {
         int r = esp_http_client_read(client, (char *)buf, sizeof(buf));
         if (r < 0) {
@@ -653,6 +688,17 @@ static void ota_download_task(void *arg)
         }
         if (r == 0) {
             break;
+        }
+        downloaded += (size_t)r;
+        if (content_len > 0) {
+            int pct = (int)((downloaded * 10ULL) / (size_t)content_len);
+            if (pct > 10) {
+                pct = 10;
+            }
+            if (pct != last_dl_pct) {
+                last_dl_pct = pct;
+                ota_broadcast_progress("downloading", pct);
+            }
         }
         err = ota_stream_feed(&ctx, buf, (size_t)r);
     }
@@ -722,6 +768,8 @@ static esp_err_t h_post_ota_start(httpd_req_t *req)
     }
     strncpy(args->url, url, sizeof(args->url) - 1);
     cJSON_Delete(root);
+
+    ota_broadcast_progress("downloading", 0);
 
     BaseType_t ok = xTaskCreate(ota_download_task, "ota_dl", OTA_STACK_SIZE, args,
                                 tskIDLE_PRIORITY + 5, NULL);
