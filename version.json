@@ -2,6 +2,6 @@
   "version": "1.1.16",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.16/cybeer-v1.1.16.cyb",
   "size": 1465741,
-  "sha256": "7fc608e2ed4c43f226ac8428e2b5bdea140f5c169b46ab70e1e03dddc9fc7e61",
+  "sha256": "268a7a13f3a8b23ffa9f1c55e79b578df25da5da8fb61dccbc8c0a1d9e60ac78",
   "changelog": "Вкладка «Участники» (добавление, редактирование, удаление). Заявка заезда — с главной. Исправлена кодировка имён при claim."
 }
