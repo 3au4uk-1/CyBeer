@@ -484,6 +484,8 @@
       setInterval(tickClaimTarget, 5000);
       initClaimForm();
       connectLiveWs();
+    } else if (page === "admin") {
+      connectLiveWs();
     }
   }
 

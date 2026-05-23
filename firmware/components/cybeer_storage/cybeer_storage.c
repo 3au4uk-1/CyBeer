@@ -162,6 +162,25 @@ esp_err_t cybeer_storage_init(void)
     return ESP_OK;
 }
 
+esp_err_t cybeer_storage_unmount_for_ota(void)
+{
+    ESP_RETURN_ON_FALSE(s_fs_mtx, ESP_ERR_INVALID_STATE, TAG, "not initialized");
+    if (xSemaphoreTake(s_fs_mtx, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "unmount: could not take fs mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t err = esp_vfs_littlefs_unregister("littlefs");
+    if (err != ESP_OK) {
+        xSemaphoreGive(s_fs_mtx);
+        ESP_LOGE(TAG, "littlefs unregister failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGW(TAG, "LittleFS unmounted for OTA (web UI unavailable until reboot)");
+    return ESP_OK;
+}
+
 static cJSON *parse_object_file_locked(const char *path)
 {
     size_t len = 0;

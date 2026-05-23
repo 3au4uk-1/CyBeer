@@ -60,6 +60,8 @@ typedef struct {
     const esp_partition_t *ota_part;
     const esp_partition_t *fs_part;
     bool ota_begun;
+    bool fw_finalized;
+    bool fs_prepared;
 
     mbedtls_sha256_context fw_sha_ctx;
     mbedtls_sha256_context fs_sha_ctx;
@@ -71,6 +73,16 @@ typedef struct {
 typedef struct {
     char url[OTA_URL_MAX_LEN];
 } ota_download_args_t;
+
+typedef struct {
+    httpd_req_t *req;
+    size_t content_len;
+} ota_upload_args_t;
+
+static int s_last_log_pct = -1;
+
+static esp_err_t ota_stream_finalize_firmware(ota_stream_ctx_t *ctx);
+static esp_err_t ota_prepare_littlefs_write(ota_stream_ctx_t *ctx);
 
 static void ota_set_status(const char *stage, int percent, const char *error)
 {
@@ -92,6 +104,11 @@ static void ota_broadcast_progress(const char *stage, int percent)
 {
     ota_set_status(stage, percent, NULL);
 
+    if (percent >= s_last_log_pct + 5 || s_last_log_pct < 0) {
+        ESP_LOGI(TAG, "progress: %s %d%%", stage, percent);
+        s_last_log_pct = percent;
+    }
+
     char msg[96];
     int n = snprintf(msg, sizeof(msg),
                      "{\"type\":\"ota_progress\",\"percent\":%d,\"stage\":\"%s\"}",
@@ -111,6 +128,7 @@ static void ota_broadcast_done(void)
 static void ota_broadcast_error(const char *message)
 {
     ota_set_status("error", 0, message);
+    ESP_LOGE(TAG, "failed: %s", message);
 
     char msg[140];
     int n = snprintf(msg, sizeof(msg),
@@ -247,12 +265,12 @@ static esp_err_t ota_stream_feed(ota_stream_ctx_t *ctx, const uint8_t *data, siz
             return ESP_ERR_INVALID_SIZE;
         }
 
-        err = esp_partition_erase_range(ctx->fs_part, 0, ctx->fs_part->size);
-        if (err != ESP_OK) {
-            esp_ota_abort(ctx->ota_handle);
-            return err;
-        }
-
+        ESP_LOGI(TAG, "bundle v%s: firmware=%lu fs=%lu -> slot %s",
+                 ctx->hdr.version,
+                 (unsigned long)ctx->hdr.firmware_size,
+                 (unsigned long)ctx->hdr.littlefs_size,
+                 ctx->ota_part->label);
+        s_last_log_pct = -1;
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_WRITE);
     }
 
@@ -275,6 +293,20 @@ static esp_err_t ota_stream_feed(ota_stream_ctx_t *ctx, const uint8_t *data, siz
         offset += chunk;
         int pct = (int)((ctx->fw_written * 80ULL) / ctx->total_size);
         ota_broadcast_progress("firmware", pct);
+        if ((ctx->fw_written & 0x7FFF) == 0) {
+            taskYIELD();
+        }
+    }
+
+    if (ctx->fw_written == ctx->hdr.firmware_size && !ctx->fw_finalized) {
+        esp_err_t err = ota_stream_finalize_firmware(ctx);
+        if (err != ESP_OK) {
+            return err;
+        }
+        err = ota_prepare_littlefs_write(ctx);
+        if (err != ESP_OK) {
+            return err;
+        }
     }
 
     while (offset < len && ctx->fs_written < ctx->hdr.littlefs_size) {
@@ -296,6 +328,9 @@ static esp_err_t ota_stream_feed(ota_stream_ctx_t *ctx, const uint8_t *data, siz
         offset += chunk;
         int pct = 80 + (int)((ctx->fs_written * 20ULL) / ctx->hdr.littlefs_size);
         ota_broadcast_progress("littlefs", pct);
+        if ((ctx->fs_written & 0x3FFF) == 0) {
+            taskYIELD();
+        }
     }
 
     if (offset < len) {
@@ -305,14 +340,9 @@ static esp_err_t ota_stream_feed(ota_stream_ctx_t *ctx, const uint8_t *data, siz
     return ESP_OK;
 }
 
-static esp_err_t ota_stream_finish(ota_stream_ctx_t *ctx)
+static esp_err_t ota_stream_finalize_firmware(ota_stream_ctx_t *ctx)
 {
-    if (!ctx->header_parsed || !ctx->ota_begun) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    if (ctx->fw_written != ctx->hdr.firmware_size || ctx->fs_written != ctx->hdr.littlefs_size) {
-        esp_ota_abort(ctx->ota_handle);
+    if (ctx->fw_written != ctx->hdr.firmware_size) {
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -322,24 +352,79 @@ static esp_err_t ota_stream_finish(ota_stream_ctx_t *ctx)
         return ESP_FAIL;
     }
     if (memcmp(digest, ctx->hdr.firmware_sha256, sizeof(digest)) != 0) {
-        esp_ota_abort(ctx->ota_handle);
-        return ESP_ERR_INVALID_CRC;
-    }
-
-    if (mbedtls_sha256_finish(&ctx->fs_sha_ctx, digest) != 0) {
-        esp_ota_abort(ctx->ota_handle);
-        return ESP_FAIL;
-    }
-    if (memcmp(digest, ctx->hdr.littlefs_sha256, sizeof(digest)) != 0) {
+        ESP_LOGE(TAG, "firmware SHA-256 mismatch");
         esp_ota_abort(ctx->ota_handle);
         return ESP_ERR_INVALID_CRC;
     }
 
     esp_err_t err = esp_ota_end(ctx->ota_handle);
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(err));
         return err;
     }
 
+    ctx->fw_finalized = true;
+    ctx->ota_begun = false;
+    ESP_LOGI(TAG, "firmware verified and committed to %s", ctx->ota_part->label);
+    return ESP_OK;
+}
+
+static esp_err_t ota_prepare_littlefs_write(ota_stream_ctx_t *ctx)
+{
+    if (ctx->fs_prepared) {
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "preparing LittleFS write (%lu bytes)", (unsigned long)ctx->hdr.littlefs_size);
+    ota_broadcast_progress("littlefs", 80);
+
+    esp_err_t err = cybeer_storage_unmount_for_ota();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = esp_partition_erase_range(ctx->fs_part, 0, ctx->fs_part->size);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "LittleFS erase failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ctx->fs_prepared = true;
+    ESP_LOGI(TAG, "LittleFS erased, writing image");
+    return ESP_OK;
+}
+
+static esp_err_t ota_stream_finish(ota_stream_ctx_t *ctx)
+{
+    if (!ctx->header_parsed) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!ctx->fw_finalized) {
+        esp_err_t err = ota_stream_finalize_firmware(ctx);
+        if (err != ESP_OK) {
+            return err;
+        }
+        err = ota_prepare_littlefs_write(ctx);
+        if (err != ESP_OK) {
+            return err;
+        }
+    }
+
+    if (ctx->fs_written != ctx->hdr.littlefs_size) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint8_t digest[32];
+    if (mbedtls_sha256_finish(&ctx->fs_sha_ctx, digest) != 0) {
+        return ESP_FAIL;
+    }
+    if (memcmp(digest, ctx->hdr.littlefs_sha256, sizeof(digest)) != 0) {
+        ESP_LOGE(TAG, "LittleFS SHA-256 mismatch");
+        return ESP_ERR_INVALID_CRC;
+    }
+
+    ESP_LOGI(TAG, "LittleFS verified, switching boot partition to %s", ctx->ota_part->label);
     return esp_ota_set_boot_partition(ctx->ota_part);
 }
 
@@ -514,6 +599,7 @@ static void ota_download_task(void *arg)
     ota_download_args_t *args = (ota_download_args_t *)arg;
     esp_err_t err = ESP_OK;
 
+    ESP_LOGI(TAG, "download OTA started: %s", args->url);
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_DOWNLOAD);
     ota_broadcast_progress("downloading", 0);
 
@@ -582,6 +668,7 @@ static void ota_download_task(void *arg)
 
     if (err != ESP_OK) {
         const char *msg = ota_err_user_message(err);
+        ESP_LOGE(TAG, "download OTA failed: %s (%s)", msg, esp_err_to_name(err));
         ota_broadcast_error(msg);
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         xSemaphoreGive(s_ota_mx);
@@ -589,6 +676,7 @@ static void ota_download_task(void *arg)
         return;
     }
 
+    ESP_LOGI(TAG, "download OTA complete, rebooting in 3s");
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_OK);
     ota_broadcast_done();
     vTaskDelay(pdMS_TO_TICKS(3000));
@@ -648,19 +736,23 @@ static esp_err_t h_post_ota_start(httpd_req_t *req)
     return httpd_resp_send(req, "{\"ok\":true,\"status\":\"started\"}", HTTPD_RESP_USE_STRLEN);
 }
 
-static esp_err_t h_post_ota_upload(httpd_req_t *req)
+static void ota_upload_task(void *arg)
 {
-    if (require_admin(req) != ESP_OK) {
-        return ESP_OK;
-    }
+    ota_upload_args_t *args = (ota_upload_args_t *)arg;
+    httpd_req_t *req = args->req;
+    const size_t content_len = args->content_len;
+    free(args);
 
-    size_t content_len = (size_t)req->content_len;
-    if (content_len <= CYBEER_OTA_HEADER_SIZE || content_len > OTA_MAX_BUNDLE_SIZE) {
-        return send_json_err(req, "400 Bad Request", "{\"error\":\"invalid size\"}");
-    }
+    ESP_LOGI(TAG, "upload OTA started (%u bytes)", (unsigned)content_len);
 
-    if (xSemaphoreTake(s_ota_mx, 0) != pdTRUE) {
-        return send_json_err(req, "409 Conflict", "{\"error\":\"ota busy\"}");
+    httpd_resp_set_status(req, "202 Accepted");
+    httpd_resp_set_type(req, "application/json");
+    if (httpd_resp_send(req, "{\"ok\":true,\"status\":\"started\"}", HTTPD_RESP_USE_STRLEN) != ESP_OK) {
+        ESP_LOGE(TAG, "upload: failed to send 202 response");
+        httpd_req_async_handler_complete(req);
+        xSemaphoreGive(s_ota_mx);
+        vTaskDelete(NULL);
+        return;
     }
 
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_DOWNLOAD);
@@ -671,13 +763,15 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
     if (err != ESP_OK) {
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         ota_broadcast_error("sha init failed");
+        httpd_req_async_handler_complete(req);
         xSemaphoreGive(s_ota_mx);
-        return send_json_err(req, "500 Internal Server Error", "{\"error\":\"sha init\"}");
+        vTaskDelete(NULL);
+        return;
     }
 
     uint8_t buf[OTA_BUF_SIZE];
     size_t received = 0;
-    while (received < content_len) {
+    while (received < content_len && err == ESP_OK) {
         size_t want = content_len - received;
         if (want > sizeof(buf)) {
             want = sizeof(buf);
@@ -694,8 +788,9 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
 
         received += (size_t)r;
         err = ota_stream_feed(&ctx, buf, (size_t)r);
-        if (err != ESP_OK) {
-            break;
+        if (received <= sizeof(buf) || (received & 0xFFFF) == 0) {
+            int pct = (int)((received * 10ULL) / content_len);
+            ota_broadcast_progress("receiving", pct);
         }
     }
 
@@ -703,23 +798,65 @@ static esp_err_t h_post_ota_upload(httpd_req_t *req)
         err = ota_stream_finish(&ctx);
     }
     ota_stream_cleanup(&ctx);
+    httpd_req_async_handler_complete(req);
 
     if (err != ESP_OK) {
         const char *msg = ota_err_user_message(err);
+        ESP_LOGE(TAG, "upload OTA failed: %s (%s)", msg, esp_err_to_name(err));
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         ota_broadcast_error(msg);
         xSemaphoreGive(s_ota_mx);
-        return send_json_err(req, "400 Bad Request", "{\"error\":\"ota failed\"}");
+        vTaskDelete(NULL);
+        return;
     }
 
+    ESP_LOGI(TAG, "upload OTA complete, rebooting in 3s");
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_OK);
     ota_broadcast_done();
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
-
     vTaskDelay(pdMS_TO_TICKS(3000));
     esp_restart();
+}
+
+static esp_err_t h_post_ota_upload(httpd_req_t *req)
+{
+    if (require_admin(req) != ESP_OK) {
+        return ESP_OK;
+    }
+
+    size_t content_len = (size_t)req->content_len;
+    if (content_len <= CYBEER_OTA_HEADER_SIZE || content_len > OTA_MAX_BUNDLE_SIZE) {
+        return send_json_err(req, "400 Bad Request", "{\"error\":\"invalid size\"}");
+    }
+
+    if (xSemaphoreTake(s_ota_mx, 0) != pdTRUE) {
+        return send_json_err(req, "409 Conflict", "{\"error\":\"ota busy\"}");
+    }
+
+    httpd_req_t *async_req = NULL;
+    esp_err_t err = httpd_req_async_handler_begin(req, &async_req);
+    if (err != ESP_OK || !async_req) {
+        xSemaphoreGive(s_ota_mx);
+        return send_json_err(req, "500 Internal Server Error", "{\"error\":\"async begin\"}");
+    }
+
+    ota_upload_args_t *args = calloc(1, sizeof(*args));
+    if (!args) {
+        httpd_req_async_handler_complete(async_req);
+        xSemaphoreGive(s_ota_mx);
+        return send_json_err(req, "500 Internal Server Error", "{\"error\":\"alloc\"}");
+    }
+    args->req = async_req;
+    args->content_len = content_len;
+
+    BaseType_t ok = xTaskCreate(ota_upload_task, "ota_up", OTA_STACK_SIZE, args,
+                                tskIDLE_PRIORITY + 5, NULL);
+    if (ok != pdPASS) {
+        free(args);
+        httpd_req_async_handler_complete(async_req);
+        xSemaphoreGive(s_ota_mx);
+        return send_json_err(req, "500 Internal Server Error", "{\"error\":\"task create\"}");
+    }
+
     return ESP_OK;
 }
 

@@ -469,6 +469,55 @@ fetchStatus().catch(function (e) {
 
 /* --- OTA Update --- */
 
+const OTA_STAGE_NAMES = {
+  downloading: "Скачивание...",
+  receiving: "Получение...",
+  firmware: "Запись прошивки...",
+  littlefs: "Запись интерфейса...",
+};
+
+let otaPollTimer = null;
+
+function otaApplyProgress(data) {
+  if (!data) return;
+  if (data.stage) {
+    document.getElementById("otaStage").textContent = OTA_STAGE_NAMES[data.stage] || data.stage;
+  }
+  if (typeof data.percent === "number") {
+    document.getElementById("otaBar").value = data.percent;
+  }
+}
+
+function otaStopPolling() {
+  if (otaPollTimer) {
+    clearInterval(otaPollTimer);
+    otaPollTimer = null;
+  }
+}
+
+function otaStartPolling() {
+  otaStopPolling();
+  otaPollTimer = setInterval(async function () {
+    try {
+      const res = await fetch("/api/admin/ota/status", { headers: pinHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      otaApplyProgress(data);
+      if (data.error) {
+        otaStopPolling();
+        otaShowError(data.error);
+      } else if (data.stage === "done") {
+        otaStopPolling();
+        document.getElementById("otaStage").textContent = "Обновлено! Перезагрузка...";
+        document.getElementById("otaBar").value = 100;
+        setTimeout(function () {
+          location.reload();
+        }, 7000);
+      }
+    } catch (_) {}
+  }, 1000);
+}
+
 async function otaCheck() {
   try {
     const res = await fetch("/api/admin/ota/check", { headers: pinHeaders() });
@@ -497,9 +546,11 @@ function otaShowProgress() {
   document.getElementById("otaUpToDate").style.display = "none";
   document.getElementById("otaError").style.display = "none";
   document.querySelectorAll("#adminPanel details:not(#otaSection) button, #adminPanel details:not(#otaSection) input, #adminPanel details:not(#otaSection) select").forEach(el => el.disabled = true);
+  otaStartPolling();
 }
 
 function otaShowError(msg) {
+  otaStopPolling();
   document.getElementById("otaProgress").style.display = "none";
   document.getElementById("otaError").style.display = "";
   document.getElementById("otaErrMsg").textContent = msg;
@@ -513,7 +564,7 @@ async function otaStart() {
       method: "POST",
       headers: pinHeaders(),
     });
-    if (!res.ok) {
+    if (!res.ok && res.status !== 202) {
       const d = await res.json().catch(() => ({}));
       throw new Error(d.error || "Ошибка запуска");
     }
@@ -534,7 +585,7 @@ async function otaUpload() {
       headers: { "X-Admin-Pin": getAdminPin(), "Content-Type": "application/octet-stream" },
       body: file,
     });
-    if (!res.ok) {
+    if (!res.ok && res.status !== 202) {
       const d = await res.json().catch(() => ({}));
       throw new Error(d.error || "Ошибка загрузки");
     }
@@ -545,13 +596,14 @@ async function otaUpload() {
 
 function otaHandleWsMessage(data) {
   if (data.type === "ota_progress") {
-    document.getElementById("otaBar").value = data.percent;
-    const stageNames = { downloading: "Скачивание...", receiving: "Получение...", firmware: "Запись прошивки...", littlefs: "Запись интерфейса..." };
-    document.getElementById("otaStage").textContent = stageNames[data.stage] || data.stage;
+    otaApplyProgress(data);
   } else if (data.type === "ota_done") {
+    otaStopPolling();
     document.getElementById("otaStage").textContent = "Обновлено! Перезагрузка...";
     document.getElementById("otaBar").value = 100;
-    setTimeout(() => location.reload(), 7000);
+    setTimeout(function () {
+      location.reload();
+    }, 7000);
   } else if (data.type === "ota_error") {
     otaShowError(data.message);
   }

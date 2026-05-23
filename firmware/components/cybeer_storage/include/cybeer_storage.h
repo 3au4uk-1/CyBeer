@@ -33,6 +33,9 @@ typedef struct {
 
 esp_err_t cybeer_storage_init(void);
 
+/** Unmount LittleFS VFS before raw partition OTA write; do not call storage APIs after. */
+esp_err_t cybeer_storage_unmount_for_ota(void);
+
 esp_err_t cybeer_nvs_get_wifi(char *ssid_out, size_t ssid_max, char *pass_out, size_t pass_max);
 esp_err_t cybeer_nvs_set_wifi(const char *ssid, const char *pass);
 /** Erases stored STA credentials (both SSID and password keys). */
