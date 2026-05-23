@@ -2,47 +2,11 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CyBeer — Заявить заезд</title>
-  <link rel="stylesheet" href="/app.css" />
+  <meta http-equiv="refresh" content="0;url=/participants.html" />
+  <title>CyBeer — перенаправление</title>
+  <script>location.replace("/participants.html");</script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">🍺</span>
-      <h1>CyBeer</h1>
-    </div>
-    <div class="status-line">
-      <div class="battery" id="batteryWrap" title="Батарея">
-        <span class="battery-icon" id="batteryIcon" aria-hidden="true">🔋</span>
-        <span id="batteryPct">—</span>
-      </div>
-      <span id="stateBadge" class="badge">…</span>
-      <span class="ver" id="fwVer"></span>
-    </div>
-    <nav></nav>
-  </header>
-
-  <main>
-    <section class="panel claim-panel">
-      <h2>Заявить заезд</h2>
-      <p>Незаявленный заезд: <strong class="claim-result" id="targetRunTime">(загрузка...)</strong></p>
-      <p class="hint" id="targetRunId" style="font-size:0.75rem;color:var(--muted)"></p>
-
-      <form id="claimForm">
-        <label for="claimSelect">Выбрать участника:</label>
-        <select id="claimSelect">
-          <option value="">— Новый участник —</option>
-        </select>
-        <label for="claimName">Или введите новое имя:</label>
-        <input type="text" id="claimName" placeholder="Имя нового участника" />
-        <button type="submit">Заявить</button>
-      </form>
-      <p id="claimMsg" class="msg"></p>
-    </section>
-  </main>
-
-  <script>window.__CYBEER_PAGE__ = "claim";</script>
-  <script src="/app.js"></script>
+  <p><a href="/participants.html">Перейти к участникам</a></p>
 </body>
 </html>

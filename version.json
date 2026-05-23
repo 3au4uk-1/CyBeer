@@ -1,7 +1,7 @@
 {
-  "version": "1.1.15",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.15/cybeer-v1.1.15.cyb",
-  "size": 1464205,
-  "sha256": "3bb913a5f7335f4b486c84dee91a50eda19d5b2b59608294a4bf43a9d3e4a48f",
-  "changelog": "Исправлены eco/сон (idle-latch вместо light sleep), claim по новому имени, boot в READY без автостарта."
+  "version": "1.1.16",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.16/cybeer-v1.1.16.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "Вкладка «Участники» (добавление, редактирование, удаление). Заявка заезда — с главной. Исправлена кодировка имён при claim."
 }

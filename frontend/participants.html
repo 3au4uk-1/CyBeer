@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CyBeer — Участники</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">🍺</span>
+      <h1>CyBeer</h1>
+    </div>
+    <div class="status-line">
+      <div class="battery" id="batteryWrap" title="Батарея">
+        <span class="battery-icon" id="batteryIcon" aria-hidden="true">🔋</span>
+        <span id="batteryPct">—</span>
+      </div>
+      <span id="stateBadge" class="badge">…</span>
+      <span class="ver" id="fwVer"></span>
+    </div>
+    <nav></nav>
+  </header>
+
+  <main>
+    <section class="panel participants-panel">
+      <h2>Участники</h2>
+      <p class="hint">Заявить заезд можно на главной — нажмите на таймер, когда есть незаявленный результат.</p>
+
+      <form id="addParticipantForm" class="participants-add">
+        <label for="addParticipantName">Новый участник</label>
+        <input type="text" id="addParticipantName" maxlength="32" placeholder="Имя" autocomplete="off" required />
+        <button type="submit">Добавить</button>
+      </form>
+      <p id="participantsMsg" class="msg" aria-live="polite"></p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Имя</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
+          <tbody id="participantsBody">
+            <tr><td colspan="2">Загрузка…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>window.__CYBEER_PAGE__ = "participants";</script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -723,6 +723,84 @@ esp_err_t cybeer_storage_rename_participant(const char *participant_id, const ch
     return err;
 }
 
+esp_err_t cybeer_storage_create_participant(const char *name, char pid_out[37])
+{
+    ESP_RETURN_ON_FALSE(name && name[0] && pid_out, ESP_ERR_INVALID_ARG, TAG, "args");
+    if (strlen(name) > 32) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    char existing[37] = { 0 };
+    if (resolve_participant_by_name_locked(name, existing) == ESP_OK) {
+        give_mtx();
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t err = create_participant_by_name_locked(name, pid_out);
+    give_mtx();
+    return err;
+}
+
+esp_err_t cybeer_storage_delete_participant(const char *participant_id)
+{
+    ESP_RETURN_ON_FALSE(participant_id && participant_id[0], ESP_ERR_INVALID_ARG, TAG, "args");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (runs) {
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, runs)
+        {
+            cybeer_run_t r;
+            run_from_json(item, &r);
+            if (r.claimed && r.participant_id[0] && strcmp(r.participant_id, participant_id) == 0) {
+                cJSON_Delete(runs);
+                give_mtx();
+                return ESP_ERR_INVALID_STATE;
+            }
+        }
+        cJSON_Delete(runs);
+    }
+
+    cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
+    if (!parts) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    int idx = -1;
+    int i = 0;
+    const cJSON *p = NULL;
+    cJSON_ArrayForEach(p, parts)
+    {
+        const cJSON *jid = cJSON_GetObjectItemCaseSensitive(p, "id");
+        if (cJSON_IsString(jid) && jid->valuestring && strcmp(jid->valuestring, participant_id) == 0) {
+            idx = i;
+            break;
+        }
+        i++;
+    }
+
+    if (idx < 0) {
+        cJSON_Delete(parts);
+        give_mtx();
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    cJSON_DeleteItemFromArray(parts, idx);
+    esp_err_t err = persist_json_locked(PATH_PARTICIPANTS, parts);
+    cJSON_Delete(parts);
+    give_mtx();
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "deleted participant %s", participant_id);
+    }
+    return err;
+}
+
 esp_err_t cybeer_storage_get_latest_unclaimed_run_id(char *out_id, size_t out_len)
 {
     ESP_RETURN_ON_FALSE(out_id && out_len > 0, ESP_ERR_INVALID_ARG, TAG, "buf");

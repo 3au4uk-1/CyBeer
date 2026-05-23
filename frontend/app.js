@@ -56,7 +56,7 @@
 
     const links = [
       { href: "/", label: "Главная", page: "index" },
-      { href: "/claim.html", label: "Заявить заезд", page: "claim" },
+      { href: "/participants.html", label: "Участники", page: "participants" },
       { href: "/tournament.html", label: "Турнир", page: "tournament" },
       { href: "/admin.html", label: "Админка", page: "admin" },
     ];
@@ -439,12 +439,11 @@
 
   function buildClaimBody(sel, nameInput) {
     const typed = nameInput?.value?.trim() || "";
-    const useExisting = sel?.value && (!typed || nameInput?.disabled);
-    if (useExisting) {
-      return { participantId: sel.value };
-    }
     if (typed) {
       return { name: typed };
+    }
+    if (sel?.value) {
+      return { participantId: sel.value };
     }
     return null;
   }
@@ -575,96 +574,243 @@
 
   /* ========== Claim page ========== */
 
-  async function tickClaimTarget() {
-    const timeEl = document.getElementById("targetRunTime");
-    const idEl = document.getElementById("targetRunId");
-    try {
-      const rs = await fetch("/api/status");
-      const st = await rs.json();
-      renderStatus(st);
-      if (timeEl) {
-        timeEl.textContent = st.unclaimedRunDurationUs
-          ? formatDuration(st.unclaimedRunDurationUs)
-          : "(нет)";
+  function setParticipantsMsg(text, isErr) {
+    const msg = document.getElementById("participantsMsg");
+    if (!msg) return;
+    msg.textContent = text || "";
+    msg.classList.toggle("err", !!isErr);
+  }
+
+  async function fetchParticipantsList() {
+    const r = await fetch("/api/participants");
+    if (!r.ok) throw new Error("Не удалось загрузить участников");
+    const data = await r.json();
+    if (!Array.isArray(data)) return [];
+    return data.filter(function (p) {
+      return p && p.id && p.name;
+    });
+  }
+
+  function renderParticipantsTable(list) {
+    const tbody = document.getElementById("participantsBody");
+    if (!tbody) return;
+
+    nameByPid.clear();
+    for (const p of list) {
+      nameByPid.set(p.id, p.name);
+    }
+
+    const sorted = list.slice().sort(function (a, b) {
+      return a.name.localeCompare(b.name, "ru");
+    });
+
+    tbody.innerHTML = "";
+    if (sorted.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = '<td colspan="2">Пока нет участников</td>';
+      tbody.appendChild(tr);
+      return;
+    }
+
+    for (const p of sorted) {
+      const tr = document.createElement("tr");
+      tr.dataset.participantId = p.id;
+
+      const nameTd = document.createElement("td");
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "participant-name";
+      nameSpan.textContent = p.name;
+      nameTd.appendChild(nameSpan);
+
+      const editWrap = document.createElement("div");
+      editWrap.className = "participant-edit";
+      editWrap.hidden = true;
+      const editInput = document.createElement("input");
+      editInput.type = "text";
+      editInput.maxLength = 32;
+      editInput.value = p.name;
+      editInput.autocomplete = "off";
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.textContent = "Сохранить";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn-secondary";
+      cancelBtn.textContent = "Отмена";
+      editWrap.append(editInput, saveBtn, cancelBtn);
+      nameTd.appendChild(editWrap);
+
+      const actionsTd = document.createElement("td");
+      actionsTd.className = "participants-actions";
+
+      const profileLink = document.createElement("a");
+      profileLink.href = "/player.html?id=" + encodeURIComponent(p.id);
+      profileLink.textContent = "Профиль";
+      profileLink.className = "btn-link";
+
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "btn-edit";
+      editBtn.textContent = "Изменить";
+
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "btn-danger";
+      delBtn.textContent = "Удалить";
+
+      function showEdit(show) {
+        nameSpan.hidden = show;
+        editWrap.hidden = !show;
+        editBtn.hidden = show;
+        delBtn.disabled = show;
+        profileLink.style.pointerEvents = show ? "none" : "";
+        if (show) editInput.focus();
       }
-      if (idEl) idEl.textContent = st.unclaimedRunId || "";
-    } catch (_) {
-      if (timeEl) timeEl.textContent = "(ошибка)";
+
+      editBtn.addEventListener("click", function () {
+        setParticipantsMsg("");
+        editInput.value = nameSpan.textContent;
+        showEdit(true);
+      });
+
+      cancelBtn.addEventListener("click", function () {
+        showEdit(false);
+      });
+
+      saveBtn.addEventListener("click", async function () {
+        const newName = editInput.value.trim();
+        if (!newName) {
+          setParticipantsMsg("Введите имя.", true);
+          return;
+        }
+        if (newName === p.name) {
+          showEdit(false);
+          return;
+        }
+        saveBtn.disabled = true;
+        try {
+          const resp = await fetch("/api/participants/" + encodeURIComponent(p.id), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName }),
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(function () {
+              return {};
+            });
+            if (err.error === "name_taken") {
+              throw new Error("Такое имя уже занято.");
+            }
+            throw new Error("Не удалось сохранить.");
+          }
+          p.name = newName;
+          nameSpan.textContent = newName;
+          nameByPid.set(p.id, newName);
+          showEdit(false);
+          setParticipantsMsg("Имя обновлено.");
+        } catch (e) {
+          setParticipantsMsg(String(e), true);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      delBtn.addEventListener("click", async function () {
+        if (
+          !confirm(
+            "Удалить участника «" + p.name + "»? Нельзя удалить, если есть заявленные заезды."
+          )
+        ) {
+          return;
+        }
+        delBtn.disabled = true;
+        setParticipantsMsg("");
+        try {
+          const resp = await fetch("/api/participants/" + encodeURIComponent(p.id), {
+            method: "DELETE",
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(function () {
+              return {};
+            });
+            if (err.error === "has_runs") {
+              throw new Error("У участника есть заезды — удаление невозможно.");
+            }
+            throw new Error("Не удалось удалить.");
+          }
+          tr.remove();
+          nameByPid.delete(p.id);
+          if (!tbody.querySelector("tr")) {
+            const empty = document.createElement("tr");
+            empty.innerHTML = '<td colspan="2">Пока нет участников</td>';
+            tbody.appendChild(empty);
+          }
+          setParticipantsMsg("Участник удалён.");
+        } catch (e) {
+          setParticipantsMsg(String(e), true);
+        } finally {
+          delBtn.disabled = false;
+        }
+      });
+
+      actionsTd.append(profileLink, editBtn, delBtn);
+      tr.append(nameTd, actionsTd);
+      tbody.appendChild(tr);
     }
   }
 
-  function initClaimForm() {
-    const form = document.getElementById("claimForm");
-    const msg = document.getElementById("claimMsg");
-    const sel = document.getElementById("claimSelect");
-    const nameInput = document.getElementById("claimName");
-    if (!form) return;
-
-    fetch("/api/participants")
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (data) {
-        if (!Array.isArray(data)) return;
-        for (const p of data) {
-          if (!p || !p.id || !p.name) continue;
-          const opt = document.createElement("option");
-          opt.value = p.id;
-          opt.textContent = p.name;
-          sel.appendChild(opt);
-        }
-      })
-      .catch(function () {});
-
-    sel.addEventListener("change", function () {
-      if (sel.value) {
-        nameInput.value = "";
-        nameInput.disabled = true;
-      } else {
-        nameInput.disabled = false;
+  async function reloadParticipantsPage() {
+    try {
+      const list = await fetchParticipantsList();
+      renderParticipantsTable(list);
+    } catch (e) {
+      setParticipantsMsg(String(e), true);
+      const tbody = document.getElementById("participantsBody");
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="2">Ошибка загрузки</td></tr>';
       }
-    });
+    }
+  }
+
+  function initParticipantsPage() {
+    const form = document.getElementById("addParticipantForm");
+    const nameInput = document.getElementById("addParticipantName");
+    if (!form || !nameInput) return;
+
+    reloadParticipantsPage();
 
     form.addEventListener("submit", async function (ev) {
       ev.preventDefault();
-      if (msg) {
-        msg.textContent = "";
-        msg.classList.remove("err");
-      }
-      const rs = await fetch("/api/status");
-      const status = await rs.json();
-      syncUnclaimedFromStatus(status);
-      const runId = status.unclaimedRunId;
-      const runDuration = status.unclaimedRunDurationUs;
-      if (!runId) {
-        if (msg) {
-          msg.textContent = "Нет незаявленного заезда.";
-          msg.classList.add("err");
-        }
+      const name = nameInput.value.trim();
+      if (!name) {
+        setParticipantsMsg("Введите имя.", true);
         return;
       }
-
-      const body = buildClaimBody(sel, nameInput);
-      if (!body) {
-        if (msg) {
-          msg.textContent = "Выберите участника или введите имя.";
-          msg.classList.add("err");
-        }
-        return;
-      }
-
+      setParticipantsMsg("");
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = true;
       try {
-        await submitClaimRun(runId, runDuration, body);
-        if (msg) {
-          msg.textContent = "Заявлено! Ваш результат: " + formatDuration(runDuration);
-          msg.classList.remove("err");
+        const resp = await fetch("/api/participants", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(function () {
+            return {};
+          });
+          if (err.error === "name_taken") {
+            throw new Error("Участник с таким именем уже есть.");
+          }
+          throw new Error("Не удалось добавить.");
         }
-        await tickClaimTarget();
+        nameInput.value = "";
+        await reloadParticipantsPage();
+        setParticipantsMsg("Участник добавлен.");
       } catch (e) {
-        if (msg) {
-          msg.textContent = String(e);
-          msg.classList.add("err");
-        }
+        setParticipantsMsg(String(e), true);
+      } finally {
+        if (btn) btn.disabled = false;
       }
     });
   }
@@ -707,10 +853,8 @@
           updateTimerHero(st.state || "PREP", dur);
         })
         .catch(function () {});
-    } else if (page === "claim") {
-      tickClaimTarget();
-      setInterval(tickClaimTarget, 5000);
-      initClaimForm();
+    } else if (page === "participants") {
+      initParticipantsPage();
       connectLiveWs();
     } else if (page === "admin") {
       connectLiveWs();
