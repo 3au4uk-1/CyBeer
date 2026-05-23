@@ -1,7 +1,7 @@
 {
-  "version": "1.1.10",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.10/cybeer-v1.1.10.cyb",
+  "version": "1.1.11",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.11/cybeer-v1.1.11.cyb",
   "size": 0,
   "sha256": "",
-  "changelog": "Исправлена привязка заезда (POST /api/claim). OTA с GitHub: редиректы, проверка HTTP, прогресс скачивания."
+  "changelog": "Исправлен boot loop v1.1.10: превышен лимит HTTP-маршрутов. Удалён дублирующий claim route, лимит увеличен до 40."
 }
