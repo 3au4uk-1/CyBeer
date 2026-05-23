@@ -1,7 +1,7 @@
 {
-  "version": "1.1.2",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.2/cybeer-v1.1.2.cyb",
-  "size": 1454349,
-  "sha256": "7e697d66c8bd895eded62258e71c4ac4c0f259ceac7249bb33a4218446d429c5",
+  "version": "1.1.4",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.4/cybeer-v1.1.4.cyb",
+  "size": 1454653,
+  "sha256": "402b07bccb16126a71171d64b925ca0be05497c93c0b9f9090efa970a2eb1292",
   "changelog": "Начальная версия с OTA"
 }
