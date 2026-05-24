@@ -30,3 +30,8 @@
 
 #define CYBEER_OTA_MANIFEST_URL "https://raw.githubusercontent.com/3au4uk-1/CyBeer/master/version.json"
 #define CYBEER_OTA_CHECK_CACHE_SEC 300
+
+#define CYBEER_SYNC_BASE_URL    "https://cyber.dosugmayak.ru/api/cybeer"
+#define CYBEER_SYNC_API_KEY     "cybeer_sk_a7f3e9b1c4d2890156ef7832ab4c610d"
+#define CYBEER_SYNC_INTERVAL_MS 30000
+#define CYBEER_SYNC_QUEUE_PATH  "/littlefs/data/sync_queue.json"
