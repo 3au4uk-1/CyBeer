@@ -1,7 +1,7 @@
 {
   "version": "1.1.19",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.19/cybeer-v1.1.19.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1466333,
+  "sha256": "4869be5f28be0b3637f66d74b6b799fa17696a1f1ddb4d3fed6a6023fb238c94",
   "changelog": "Незаявленные заезды в лидерборде (без имени). Синхронизация секундомера в режиме для ТВ."
 }
