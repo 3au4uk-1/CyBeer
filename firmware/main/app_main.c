@@ -5,6 +5,7 @@
 #include "cybeer_ota.h"
 #include "cybeer_power.h"
 #include "cybeer_storage.h"
+#include "cybeer_sync.h"
 #include "cybeer_tournament.h"
 #include "cybeer_web.h"
 #include "cybeer_wifi.h"
@@ -50,6 +51,7 @@ static void persist_finished_run(int64_t duration_us)
         ESP_LOGE(TAG, "storage_add_run failed: %s", esp_err_to_name(err));
         return;
     }
+    (void)cybeer_sync_enqueue_run(&run);
     ESP_LOGI(TAG, "run saved id=%s duration_us=%lld", run.id, (long long)run.duration_us);
 
     taskYIELD();
@@ -252,6 +254,7 @@ void app_main(void)
     ESP_ERROR_CHECK(cybeer_wifi_init());
     ESP_ERROR_CHECK(cybeer_web_start());
     ESP_ERROR_CHECK(cybeer_wifi_start());
+    ESP_ERROR_CHECK(cybeer_sync_init());
 
     const BaseType_t ok = xTaskCreate(display_task, "display_task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
     if (ok != pdPASS) {

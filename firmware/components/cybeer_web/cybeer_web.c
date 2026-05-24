@@ -12,6 +12,7 @@
 #include "cybeer_timer.h"
 #include "cybeer_ws.h"
 #include "cybeer_storage.h"
+#include "cybeer_sync.h"
 #include "cybeer_tournament.h"
 #include "cybeer_wifi.h"
 #include "cybeer_power.h"
@@ -284,6 +285,7 @@ static esp_err_t h_post_claim(httpd_req_t *req)
             cybeer_led_set_fx(CYBEER_LED_FX_PODIUM);
         }
         (void)cybeer_tournament_notify_run_claimed(run_id);
+        (void)cybeer_sync_enqueue_run(&claimed_run);
         cybeer_ws_broadcast_leaderboard_update();
         cybeer_led_set_unclaimed_flag(false);
 
@@ -773,11 +775,13 @@ static esp_err_t h_post_participants(httpd_req_t *req)
 
     char name_copy[96];
     strncpy(name_copy, jname->valuestring, sizeof(name_copy) - 1);
+    name_copy[sizeof(name_copy) - 1] = '\0';
     cJSON_Delete(root);
 
     char pid[37] = { 0 };
     esp_err_t err = cybeer_storage_create_participant(name_copy, pid);
     if (err == ESP_OK) {
+        (void)cybeer_sync_enqueue_participant(pid, name_copy);
         cybeer_ws_broadcast_leaderboard_update();
         cJSON *resp = cJSON_CreateObject();
         if (!resp) {
@@ -853,10 +857,15 @@ static esp_err_t h_patch_participant(httpd_req_t *req)
         return send_json_text(req, "400 Bad Request", "{\"error\":\"name max 32 chars\"}");
     }
 
-    esp_err_t err = cybeer_storage_rename_participant(pid, jname->valuestring);
+    char new_name[96];
+    strncpy(new_name, jname->valuestring, sizeof(new_name) - 1);
+    new_name[sizeof(new_name) - 1] = '\0';
+
+    esp_err_t err = cybeer_storage_rename_participant(pid, new_name);
     cJSON_Delete(root);
 
     if (err == ESP_OK) {
+        (void)cybeer_sync_enqueue_participant(pid, new_name);
         cybeer_ws_broadcast_leaderboard_update();
         return send_json_text(req, "200 OK", "{\"ok\":true}");
     }
