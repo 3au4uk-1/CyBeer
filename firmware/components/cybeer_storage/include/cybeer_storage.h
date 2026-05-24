@@ -70,6 +70,9 @@ void cybeer_format_uuid_v4(char out[37]);
 void cybeer_storage_iso8601_now(char buf[32]);
 
 esp_err_t cybeer_storage_add_run(const cybeer_run_t *run);
+int cybeer_storage_runs_count(void);
+esp_err_t cybeer_storage_add_run_if_not_exists(const cybeer_run_t *run);
+esp_err_t cybeer_storage_upsert_participant(const char *device_id, const char *name);
 esp_err_t cybeer_storage_add_run_manual(cybeer_run_t *run);
 esp_err_t cybeer_storage_get_run(const char *run_id, cybeer_run_t *out);
 esp_err_t cybeer_storage_delete_run(const char *run_id);

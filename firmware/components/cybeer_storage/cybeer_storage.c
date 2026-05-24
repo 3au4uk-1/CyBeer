@@ -314,6 +314,119 @@ esp_err_t cybeer_storage_add_run(const cybeer_run_t *run)
     return err;
 }
 
+int cybeer_storage_runs_count(void)
+{
+    if (take_mtx() != ESP_OK) {
+        return 0;
+    }
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return 0;
+    }
+
+    int count = cJSON_GetArraySize(runs);
+    cJSON_Delete(runs);
+    give_mtx();
+    return count;
+}
+
+esp_err_t cybeer_storage_add_run_if_not_exists(const cybeer_run_t *run)
+{
+    ESP_RETURN_ON_FALSE(run && run->id[0], ESP_ERR_INVALID_ARG, TAG, "run/id");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *runs = parse_array_file_locked(PATH_RUNS);
+    if (!runs) {
+        give_mtx();
+        return ESP_FAIL;
+    }
+
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, runs)
+    {
+        cybeer_run_t current;
+        run_from_json(item, &current);
+        if (strcmp(current.id, run->id) == 0) {
+            cJSON_Delete(runs);
+            give_mtx();
+            return ESP_OK;
+        }
+    }
+
+    cJSON *new_item = run_to_json_new(run);
+    if (!new_item) {
+        cJSON_Delete(runs);
+        give_mtx();
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON_AddItemToArray(runs, new_item);
+
+    esp_err_t err = persist_json_locked(PATH_RUNS, runs);
+    cJSON_Delete(runs);
+    give_mtx();
+    return err;
+}
+
+esp_err_t cybeer_storage_upsert_participant(const char *device_id, const char *name)
+{
+    ESP_RETURN_ON_FALSE(device_id && device_id[0] && name && name[0], ESP_ERR_INVALID_ARG, TAG, "args");
+
+    ESP_RETURN_ON_ERROR(take_mtx(), TAG, "take");
+
+    cJSON *parts = parse_array_file_locked(PATH_PARTICIPANTS);
+    if (!parts) {
+        parts = cJSON_CreateArray();
+        if (!parts) {
+            give_mtx();
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    cJSON *target = NULL;
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, parts)
+    {
+        cJSON *jid = cJSON_GetObjectItemCaseSensitive(item, "id");
+        if (!cJSON_IsString(jid) || !jid->valuestring) {
+            continue;
+        }
+        if (strcmp(jid->valuestring, device_id) == 0) {
+            target = item;
+            break;
+        }
+    }
+
+    if (target) {
+        cJSON *jname = cJSON_GetObjectItemCaseSensitive(target, "name");
+        if (cJSON_IsString(jname)) {
+            cJSON_SetValuestring(jname, name);
+        } else {
+            cJSON_AddStringToObject(target, "name", name);
+        }
+    } else {
+        cJSON *participant = cJSON_CreateObject();
+        if (!participant) {
+            cJSON_Delete(parts);
+            give_mtx();
+            return ESP_ERR_NO_MEM;
+        }
+        cJSON_AddStringToObject(participant, "id", device_id);
+        cJSON_AddStringToObject(participant, "name", name);
+        char ts[32];
+        cybeer_storage_iso8601_now(ts);
+        cJSON_AddStringToObject(participant, "createdAt", ts);
+        cJSON_AddItemToArray(parts, participant);
+    }
+
+    esp_err_t err = persist_json_locked(PATH_PARTICIPANTS, parts);
+    cJSON_Delete(parts);
+    give_mtx();
+    return err;
+}
+
 static bool run_exists_locked(const char *run_id)
 {
     cJSON *runs = parse_array_file_locked(PATH_RUNS);
