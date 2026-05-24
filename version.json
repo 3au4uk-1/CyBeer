@@ -1,7 +1,7 @@
 {
   "version": "1.1.18",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.18/cybeer-v1.1.18.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1466077,
+  "sha256": "31a6c6cdd857a2234da3ad95244dbb3383e7ba0cd701185f4af8c523bfd824d5",
   "changelog": "Исправлен OTA с GitHub (watchdog при скачивании). Скрыта форма редактирования участника до нажатия на карандаш."
 }
