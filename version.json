@@ -1,7 +1,7 @@
 {
   "version": "1.1.21",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.21/cybeer-v1.1.21.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1475021,
+  "sha256": "3eb1094b830c778dbcc33e0118c60e23b268c30644b8d8d5ffbec6cc8f99f0c3",
   "changelog": "Синхронизация результатов с cyberbot (очередь офлайн, push при WiFi, restore после перепрошивки)."
 }
