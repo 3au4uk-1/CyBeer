@@ -199,8 +199,7 @@ static esp_err_t http_get_json(const char *url, cJSON **out_root)
         return ESP_ERR_NO_MEM;
     }
 
-    esp_http_client_set_header(client, "x-api-key", CYBEER_SYNC_API_KEY);
-    esp_http_client_set_header(client, "Authorization", "Bearer " CYBEER_SYNC_API_KEY);
+    esp_http_client_set_header(client, "X-Cybeer-Api-Key", CYBEER_SYNC_API_KEY);
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
         esp_http_client_cleanup(client);
@@ -278,8 +277,7 @@ static esp_err_t http_post_json_ok(const char *url, const char *body)
 
     esp_http_client_set_method(client, HTTP_METHOD_POST);
     esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_header(client, "x-api-key", CYBEER_SYNC_API_KEY);
-    esp_http_client_set_header(client, "Authorization", "Bearer " CYBEER_SYNC_API_KEY);
+    esp_http_client_set_header(client, "X-Cybeer-Api-Key", CYBEER_SYNC_API_KEY);
     esp_http_client_set_post_field(client, body, (int)strlen(body));
 
     esp_err_t err = esp_http_client_perform(client);
@@ -319,24 +317,33 @@ static void parse_run_from_dump_item(const cJSON *item, cybeer_run_t *run)
     memset(run, 0, sizeof(*run));
     const cJSON *j = NULL;
 
-    j = cJSON_GetObjectItemCaseSensitive(item, "id");
+    j = cJSON_GetObjectItemCaseSensitive(item, "deviceRunId");
+    if (!cJSON_IsString(j)) {
+        j = cJSON_GetObjectItemCaseSensitive(item, "id");
+    }
     if (cJSON_IsString(j) && j->valuestring) {
         strncpy(run->id, j->valuestring, sizeof(run->id) - 1);
     }
 
-    j = cJSON_GetObjectItemCaseSensitive(item, "participant_id");
+    j = cJSON_GetObjectItemCaseSensitive(item, "participantDeviceId");
+    if (!cJSON_IsString(j)) {
+        j = cJSON_GetObjectItemCaseSensitive(item, "participant_id");
+    }
     if (!cJSON_IsString(j)) {
         j = cJSON_GetObjectItemCaseSensitive(item, "participantId");
     }
-    if (cJSON_IsString(j) && j->valuestring) {
+    if (cJSON_IsString(j) && j->valuestring && j->valuestring[0]) {
         strncpy(run->participant_id, j->valuestring, sizeof(run->participant_id) - 1);
+        run->claimed = true;
     }
 
-    j = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
+    j = cJSON_GetObjectItemCaseSensitive(item, "durationUs");
     if (!cJSON_IsNumber(j)) {
-        j = cJSON_GetObjectItemCaseSensitive(item, "durationUs");
+        j = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
     }
-    if (cJSON_IsNumber(j)) {
+    if (cJSON_IsString(j) && j->valuestring) {
+        run->duration_us = (int64_t)strtoll(j->valuestring, NULL, 10);
+    } else if (cJSON_IsNumber(j)) {
         run->duration_us = (int64_t)j->valuedouble;
     }
 
@@ -383,9 +390,12 @@ static void restore_dump_once(void)
         cJSON *it = NULL;
         cJSON_ArrayForEach(it, participants)
         {
-            cJSON *jid = cJSON_GetObjectItemCaseSensitive(it, "id");
+            cJSON *jid = cJSON_GetObjectItemCaseSensitive(it, "deviceId");
             if (!cJSON_IsString(jid)) {
                 jid = cJSON_GetObjectItemCaseSensitive(it, "device_id");
+            }
+            if (!cJSON_IsString(jid)) {
+                jid = cJSON_GetObjectItemCaseSensitive(it, "id");
             }
             if (!cJSON_IsString(jid) || !jid->valuestring || !jid->valuestring[0]) {
                 continue;
@@ -421,6 +431,100 @@ static void restore_dump_once(void)
     cJSON_Delete(root);
 }
 
+/** Build cyberbot POST /sync body: { participants: [...], runs: [...] }. Caller frees return. */
+static cJSON *build_sync_payload_from_queue(cJSON *queue)
+{
+    cJSON *participants = cJSON_CreateArray();
+    cJSON *runs = cJSON_CreateArray();
+    cJSON *root = cJSON_CreateObject();
+    if (!participants || !runs || !root) {
+        cJSON_Delete(participants);
+        cJSON_Delete(runs);
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    cJSON *participants_map = cJSON_CreateObject();
+    cJSON *runs_map = cJSON_CreateObject();
+    if (!participants_map || !runs_map) {
+        cJSON_Delete(participants_map);
+        cJSON_Delete(runs_map);
+        cJSON_Delete(participants);
+        cJSON_Delete(runs);
+        cJSON_Delete(root);
+        return NULL;
+    }
+
+    cJSON *event = NULL;
+    cJSON_ArrayForEach(event, queue)
+    {
+        const cJSON *type = cJSON_GetObjectItemCaseSensitive(event, "type");
+        if (!cJSON_IsString(type) || !type->valuestring) {
+            continue;
+        }
+        if (strcmp(type->valuestring, "participant") == 0) {
+            const cJSON *jid = cJSON_GetObjectItemCaseSensitive(event, "device_id");
+            const cJSON *jname = cJSON_GetObjectItemCaseSensitive(event, "name");
+            if (!cJSON_IsString(jid) || !jid->valuestring || !jid->valuestring[0]) {
+                continue;
+            }
+            if (!cJSON_IsString(jname) || !jname->valuestring || !jname->valuestring[0]) {
+                continue;
+            }
+            cJSON *entry = cJSON_CreateObject();
+            if (!entry) {
+                continue;
+            }
+            cJSON_AddStringToObject(entry, "deviceId", jid->valuestring);
+            cJSON_AddStringToObject(entry, "name", jname->valuestring);
+            cJSON_DeleteItemFromObject(participants_map, jid->valuestring);
+            cJSON_AddItemToObject(participants_map, jid->valuestring, entry);
+        } else if (strcmp(type->valuestring, "run") == 0) {
+            const cJSON *jid = cJSON_GetObjectItemCaseSensitive(event, "id");
+            const cJSON *jpid = cJSON_GetObjectItemCaseSensitive(event, "participant_id");
+            const cJSON *jdur = cJSON_GetObjectItemCaseSensitive(event, "duration_us");
+            const cJSON *jfin = cJSON_GetObjectItemCaseSensitive(event, "finished_at");
+            if (!cJSON_IsString(jid) || !jid->valuestring || !jid->valuestring[0]) {
+                continue;
+            }
+            if (!cJSON_IsNumber(jdur) || !cJSON_IsString(jfin) || !jfin->valuestring) {
+                continue;
+            }
+            cJSON *entry = cJSON_CreateObject();
+            if (!entry) {
+                continue;
+            }
+            cJSON_AddStringToObject(entry, "deviceRunId", jid->valuestring);
+            if (cJSON_IsString(jpid) && jpid->valuestring && jpid->valuestring[0]) {
+                cJSON_AddStringToObject(entry, "participantDeviceId", jpid->valuestring);
+            } else {
+                cJSON_AddNullToObject(entry, "participantDeviceId");
+            }
+            cJSON_AddNumberToObject(entry, "durationUs", jdur->valuedouble);
+            cJSON_AddStringToObject(entry, "finishedAt", jfin->valuestring);
+            cJSON_DeleteItemFromObject(runs_map, jid->valuestring);
+            cJSON_AddItemToObject(runs_map, jid->valuestring, entry);
+        }
+    }
+
+    cJSON *child = participants_map->child;
+    while (child) {
+        cJSON_AddItemToArray(participants, cJSON_Duplicate(child, true));
+        child = child->next;
+    }
+    child = runs_map->child;
+    while (child) {
+        cJSON_AddItemToArray(runs, cJSON_Duplicate(child, true));
+        child = child->next;
+    }
+
+    cJSON_Delete(participants_map);
+    cJSON_Delete(runs_map);
+    cJSON_AddItemToObject(root, "participants", participants);
+    cJSON_AddItemToObject(root, "runs", runs);
+    return root;
+}
+
 static void flush_queue_once(void)
 {
     if (!cybeer_wifi_sta_connected()) {
@@ -442,20 +546,12 @@ static void flush_queue_once(void)
         return;
     }
 
-    cJSON *root = cJSON_CreateObject();
+    cJSON *root = build_sync_payload_from_queue(arr);
     if (!root) {
         cJSON_Delete(arr);
         sync_give();
         return;
     }
-    cJSON *events = cJSON_Duplicate(arr, true);
-    if (!events) {
-        cJSON_Delete(root);
-        cJSON_Delete(arr);
-        sync_give();
-        return;
-    }
-    cJSON_AddItemToObject(root, "events", events);
     char *payload = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!payload) {
