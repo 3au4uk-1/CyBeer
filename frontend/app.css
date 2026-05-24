@@ -489,11 +489,19 @@ nav a.active {
   margin: 0;
 }
 
+.participant-edit[hidden],
+.participant-name-row[hidden] {
+  display: none !important;
+}
+
 .participant-edit {
-  display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
   margin-top: 0.35rem;
+}
+
+.participant-edit:not([hidden]) {
+  display: flex;
 }
 
 .participant-edit input {

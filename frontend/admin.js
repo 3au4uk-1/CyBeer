@@ -490,6 +490,7 @@ const OTA_STAGE_NAMES = {
 };
 
 let otaPollTimer = null;
+let otaWasActive = false;
 
 function otaApplyProgress(data) {
   if (!data) return;
@@ -513,12 +514,16 @@ function otaStopPolling() {
 
 function otaStartPolling() {
   otaStopPolling();
+  otaWasActive = true;
   otaPollTimer = setInterval(async function () {
     try {
       const res = await fetch("/api/admin/ota/status", { headers: pinHeaders() });
       if (!res.ok) return;
       const data = await res.json();
       otaApplyProgress(data);
+      if (data.active) {
+        otaWasActive = true;
+      }
       if (data.error || data.stage === "error") {
         otaStopPolling();
         otaShowError(data.error || "Ошибка обновления");
@@ -529,6 +534,16 @@ function otaStartPolling() {
         setTimeout(function () {
           location.reload();
         }, 7000);
+      } else if (
+        otaWasActive &&
+        !data.active &&
+        (data.stage === "idle" || !data.stage)
+      ) {
+        otaStopPolling();
+        otaShowError(
+          data.error ||
+            "Обновление прервано. Прошейте .cyb вручную или повторите позже."
+        );
       }
     } catch (_) {}
   }, 1000);
@@ -567,6 +582,7 @@ function otaShowProgress() {
 
 function otaShowError(msg) {
   otaStopPolling();
+  otaWasActive = false;
   document.getElementById("otaProgress").style.display = "none";
   document.getElementById("otaError").style.display = "";
   document.getElementById("otaErrMsg").textContent = msg;

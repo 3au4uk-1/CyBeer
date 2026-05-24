@@ -19,6 +19,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -81,12 +82,33 @@ typedef struct {
 
 static int s_last_log_pct = -1;
 
+static void ota_wdt_reset(void)
+{
+#if CONFIG_ESP_TASK_WDT_EN
+    (void)esp_task_wdt_reset();
+#endif
+}
+
+static void ota_task_wdt_subscribe(void)
+{
+#if CONFIG_ESP_TASK_WDT_EN
+    (void)esp_task_wdt_add(NULL);
+#endif
+}
+
+static void ota_task_wdt_unsubscribe(void)
+{
+#if CONFIG_ESP_TASK_WDT_EN
+    (void)esp_task_wdt_delete(NULL);
+#endif
+}
+
 static esp_err_t ota_stream_finalize_firmware(ota_stream_ctx_t *ctx);
 static esp_err_t ota_prepare_littlefs_write(ota_stream_ctx_t *ctx);
 
 static void ota_set_status(const char *stage, int percent, const char *error)
 {
-    s_status.active = (error == NULL) && (strcmp(stage, "done") != 0);
+    s_status.active = (error == NULL) && strcmp(stage, "done") != 0 && strcmp(stage, "idle") != 0;
     s_status.percent = percent;
 
     strncpy(s_status.stage, stage, sizeof(s_status.stage) - 1);
@@ -381,12 +403,14 @@ static esp_err_t ota_prepare_littlefs_write(ota_stream_ctx_t *ctx)
 
     ESP_LOGI(TAG, "preparing LittleFS write (%lu bytes)", (unsigned long)ctx->hdr.littlefs_size);
     ota_broadcast_progress("littlefs", 80);
+    ota_wdt_reset();
 
     esp_err_t err = cybeer_storage_unmount_for_ota();
     if (err != ESP_OK) {
         return err;
     }
 
+    ota_wdt_reset();
     err = esp_partition_erase_range(ctx->fs_part, 0, ctx->fs_part->size);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "LittleFS erase failed: %s", esp_err_to_name(err));
@@ -614,6 +638,7 @@ static void ota_download_task(void *arg)
     ota_download_args_t *args = (ota_download_args_t *)arg;
     esp_err_t err = ESP_OK;
 
+    ota_task_wdt_subscribe();
     ESP_LOGI(TAG, "download OTA started: %s", args->url);
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_DOWNLOAD);
     ota_broadcast_progress("downloading", 0);
@@ -632,6 +657,7 @@ static void ota_download_task(void *arg)
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         free(args);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -643,6 +669,7 @@ static void ota_download_task(void *arg)
         esp_http_client_cleanup(client);
         free(args);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -657,6 +684,7 @@ static void ota_download_task(void *arg)
         esp_http_client_cleanup(client);
         free(args);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -673,6 +701,7 @@ static void ota_download_task(void *arg)
         esp_http_client_cleanup(client);
         free(args);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -681,6 +710,7 @@ static void ota_download_task(void *arg)
     size_t downloaded = 0;
     int last_dl_pct = -1;
     while (err == ESP_OK) {
+        ota_wdt_reset();
         int r = esp_http_client_read(client, (char *)buf, sizeof(buf));
         if (r < 0) {
             err = ESP_FAIL;
@@ -690,6 +720,7 @@ static void ota_download_task(void *arg)
             break;
         }
         downloaded += (size_t)r;
+        vTaskDelay(1);
         if (content_len > 0) {
             int pct = (int)((downloaded * 10ULL) / (size_t)content_len);
             if (pct > 10) {
@@ -718,6 +749,7 @@ static void ota_download_task(void *arg)
         ota_broadcast_error(msg);
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -725,6 +757,7 @@ static void ota_download_task(void *arg)
     ESP_LOGI(TAG, "download OTA complete, rebooting in 3s");
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_OK);
     ota_broadcast_done();
+    ota_task_wdt_unsubscribe();
     vTaskDelay(pdMS_TO_TICKS(3000));
     esp_restart();
 }
@@ -791,6 +824,7 @@ static void ota_upload_task(void *arg)
     const size_t content_len = args->content_len;
     free(args);
 
+    ota_task_wdt_subscribe();
     ESP_LOGI(TAG, "upload OTA started (%u bytes)", (unsigned)content_len);
 
     httpd_resp_set_status(req, "202 Accepted");
@@ -799,6 +833,7 @@ static void ota_upload_task(void *arg)
         ESP_LOGE(TAG, "upload: failed to send 202 response");
         httpd_req_async_handler_complete(req);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -813,6 +848,7 @@ static void ota_upload_task(void *arg)
         ota_broadcast_error("sha init failed");
         httpd_req_async_handler_complete(req);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -820,6 +856,7 @@ static void ota_upload_task(void *arg)
     uint8_t buf[OTA_BUF_SIZE];
     size_t received = 0;
     while (received < content_len && err == ESP_OK) {
+        ota_wdt_reset();
         size_t want = content_len - received;
         if (want > sizeof(buf)) {
             want = sizeof(buf);
@@ -854,6 +891,7 @@ static void ota_upload_task(void *arg)
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
         ota_broadcast_error(msg);
         xSemaphoreGive(s_ota_mx);
+        ota_task_wdt_unsubscribe();
         vTaskDelete(NULL);
         return;
     }
@@ -861,6 +899,7 @@ static void ota_upload_task(void *arg)
     ESP_LOGI(TAG, "upload OTA complete, rebooting in 3s");
     cybeer_led_set_fx(CYBEER_LED_FX_OTA_OK);
     ota_broadcast_done();
+    ota_task_wdt_unsubscribe();
     vTaskDelay(pdMS_TO_TICKS(3000));
     esp_restart();
 }

@@ -1,7 +1,7 @@
 {
-  "version": "1.1.17",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.17/cybeer-v1.1.17.cyb",
-  "size": 1465389,
-  "sha256": "c898c160e6df043ad4934a16fa0341b72ab3bc91573aa406ae5220c06c0578e8",
-  "changelog": "Исправлена загрузка статистики и истории заездов в профиле участника. Редактирование имени через иконку карандаша."
+  "version": "1.1.18",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.18/cybeer-v1.1.18.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "Исправлен OTA с GitHub (watchdog при скачивании). Скрыта форма редактирования участника до нажатия на карандаш."
 }
