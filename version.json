@@ -1,7 +1,7 @@
 {
-  "version": "1.1.17",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.18/cybeer-v1.1.17.cyb",
-  "size": 1465389,
-  "sha256": "9ccb3cfa6331642a58719207523c977783a3d557c4f46d63d6659180dd58b0f3",
-  "changelog": "Исправлена загрузка статистики и истории заездов в профиле участника. Редактирование имени через иконку карандаша."
+  "version": "1.1.19",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.19/cybeer-v1.1.19.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "Незаявленные заезды в лидерборде (без имени). Синхронизация секундомера в режиме для ТВ."
 }

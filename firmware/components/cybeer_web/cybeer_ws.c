@@ -208,6 +208,10 @@ static esp_err_t h_ws(httpd_req_t *req)
         if (state_msg) {
             cJSON_AddStringToObject(state_msg, "type", "state");
             cJSON_AddStringToObject(state_msg, "state", fsm_state_str(snap.state));
+            if (snap.state == CYBEER_STATE_RUNNING) {
+                cJSON_AddNumberToObject(state_msg, "elapsedUs",
+                                        (double)cybeer_timer_elapsed_us(esp_timer_get_time()));
+            }
             char *printed = cJSON_PrintUnformatted(state_msg);
             cJSON_Delete(state_msg);
             if (printed) {
@@ -302,6 +306,10 @@ void cybeer_ws_broadcast_state(void)
     }
     cJSON_AddStringToObject(root, "type", "state");
     cJSON_AddStringToObject(root, "state", fsm_state_str(snap.state));
+    if (snap.state == CYBEER_STATE_RUNNING) {
+        cJSON_AddNumberToObject(root, "elapsedUs",
+                                (double)cybeer_timer_elapsed_us(esp_timer_get_time()));
+    }
     char *printed = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!printed) {

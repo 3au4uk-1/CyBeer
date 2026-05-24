@@ -9,6 +9,7 @@
 #include "cybeer_config.h"
 #include "cybeer_fsm.h"
 #include "cybeer_led.h"
+#include "cybeer_timer.h"
 #include "cybeer_ws.h"
 #include "cybeer_storage.h"
 #include "cybeer_tournament.h"
@@ -23,6 +24,7 @@
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <sys/stat.h>
@@ -104,6 +106,10 @@ static esp_err_t h_get_status(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "ledBrightness", (double)led_bright);
     cJSON_AddBoolToObject(root, "adminPinConfigured", cybeer_nvs_admin_pin_is_configured());
     cJSON_AddStringToObject(root, "firmwareVersion", cybeer_firmware_version());
+    if (fsm.state == CYBEER_STATE_RUNNING) {
+        cJSON_AddNumberToObject(root, "runningElapsedUs",
+                                (double)cybeer_timer_elapsed_us(esp_timer_get_time()));
+    }
     cJSON_AddStringToObject(root, "unclaimedRunId", unclaimed);
     if (unclaimed[0] != '\0') {
         cybeer_run_t unclaimed_run;
@@ -1293,8 +1299,8 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
     }
 
     int n = cJSON_GetArraySize(arr);
-    cybeer_run_t *claimed = (cybeer_run_t *)malloc((size_t)n * sizeof(cybeer_run_t));
-    if (!claimed) {
+    cybeer_run_t *runs = (cybeer_run_t *)malloc((size_t)n * sizeof(cybeer_run_t));
+    if (!runs) {
         cJSON_Delete(arr);
         cJSON *empty = cJSON_CreateArray();
         return json_send(req, empty);
@@ -1307,9 +1313,6 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
         cybeer_run_t r;
         memset(&r, 0, sizeof(r));
         const cJSON *jcl = cJSON_GetObjectItemCaseSensitive(item, "claimed");
-        if (!cJSON_IsTrue(jcl)) {
-            continue;
-        }
         const cJSON *jdur = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
         if (!cJSON_IsNumber(jdur) || jdur->valuedouble <= 0) {
             continue;
@@ -1329,13 +1332,13 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
         if (cJSON_IsString(jfa) && jfa->valuestring) {
             strncpy(r.finished_at, jfa->valuestring, sizeof(r.finished_at) - 1);
         }
-        r.claimed = true;
-        claimed[nc++] = r;
+        r.claimed = cJSON_IsTrue(jcl);
+        runs[nc++] = r;
     }
     cJSON_Delete(arr);
 
     if (nc > 1) {
-        qsort(claimed, (size_t)nc, sizeof(cybeer_run_t), compare_runs_by_duration);
+        qsort(runs, (size_t)nc, sizeof(cybeer_run_t), compare_runs_by_duration);
     }
 
     const char *raw_parts = cybeer_storage_participants_json();
@@ -1343,7 +1346,7 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
 
     cJSON *out = cJSON_CreateArray();
     if (!out) {
-        free(claimed);
+        free(runs);
         if (parts) {
             cJSON_Delete(parts);
         }
@@ -1357,16 +1360,18 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
             continue;
         }
         cJSON_AddNumberToObject(entry, "rank", (double)(i + 1));
-        cJSON_AddStringToObject(entry, "participantId", claimed[i].participant_id);
+        cJSON_AddStringToObject(entry, "runId", runs[i].id);
+        cJSON_AddBoolToObject(entry, "claimed", runs[i].claimed);
+        cJSON_AddStringToObject(entry, "participantId", runs[i].participant_id);
 
         const char *pname = "";
-        if (parts && cJSON_IsArray(parts)) {
+        if (runs[i].claimed && runs[i].participant_id[0] != '\0' && parts && cJSON_IsArray(parts)) {
             cJSON *p = NULL;
             cJSON_ArrayForEach(p, parts)
             {
                 const cJSON *pid = cJSON_GetObjectItemCaseSensitive(p, "id");
                 if (cJSON_IsString(pid) && pid->valuestring
-                    && strcmp(pid->valuestring, claimed[i].participant_id) == 0) {
+                    && strcmp(pid->valuestring, runs[i].participant_id) == 0) {
                     const cJSON *pn = cJSON_GetObjectItemCaseSensitive(p, "name");
                     if (cJSON_IsString(pn) && pn->valuestring) {
                         pname = pn->valuestring;
@@ -1376,12 +1381,12 @@ static esp_err_t h_get_leaderboard(httpd_req_t *req)
             }
         }
         cJSON_AddStringToObject(entry, "participantName", pname);
-        cJSON_AddNumberToObject(entry, "durationUs", (double)claimed[i].duration_us);
-        cJSON_AddStringToObject(entry, "finishedAt", claimed[i].finished_at);
+        cJSON_AddNumberToObject(entry, "durationUs", (double)runs[i].duration_us);
+        cJSON_AddStringToObject(entry, "finishedAt", runs[i].finished_at);
         cJSON_AddItemToArray(out, entry);
     }
 
-    free(claimed);
+    free(runs);
     if (parts) {
         cJSON_Delete(parts);
     }

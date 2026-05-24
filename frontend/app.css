@@ -351,6 +351,11 @@ nav a.active {
   text-decoration: underline;
 }
 
+.leaderboard tr.lb-unclaimed td:nth-child(2) {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* === Player card === */
 .player-card {
   display: flex;

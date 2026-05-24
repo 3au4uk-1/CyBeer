@@ -90,7 +90,9 @@
     });
 
     var specTimer = document.getElementById("specTimer");
-    cy.updateTimerHero = function (state, durationUs) {
+    var specStatusTimer = null;
+
+    function applySpecTimer(state, durationUs) {
       var val = document.getElementById("timerValue");
       var lbl = document.getElementById("timerLabel");
       if (!specTimer || !val) return;
@@ -102,9 +104,54 @@
         READY: "Последний результат",
       };
       if (lbl) lbl.textContent = labels[state] || "";
-      if (state === "PREP") val.textContent = "0.00с";
-      else if (typeof durationUs === "number") val.textContent = cy.formatDuration(durationUs);
+      if (state === "PREP") {
+        val.textContent = "0.00с";
+      } else if (state === "RUNNING") {
+        if (typeof durationUs === "number") {
+          val.textContent = cy.formatDuration(durationUs);
+        }
+      } else if (typeof durationUs === "number") {
+        val.textContent = cy.formatDuration(durationUs);
+      }
+    }
+
+    cy.updateTimerHero = function (state, durationUs) {
+      applySpecTimer(state, durationUs);
     };
+
+    function stopSpecStatusPoll() {
+      if (specStatusTimer) {
+        clearInterval(specStatusTimer);
+        specStatusTimer = null;
+      }
+    }
+
+    function syncSpecStatus() {
+      fetch("/api/status")
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (st) {
+          var dur = null;
+          if (st.state === "RUNNING" && typeof st.runningElapsedUs === "number") {
+            dur = st.runningElapsedUs;
+          } else if (
+            (st.state === "FINISHED" || st.state === "READY") &&
+            typeof st.unclaimedRunDurationUs === "number"
+          ) {
+            dur = st.unclaimedRunDurationUs;
+          }
+          applySpecTimer(st.state || "PREP", dur);
+          if (st.state === "RUNNING") {
+            if (!specStatusTimer) {
+              specStatusTimer = setInterval(syncSpecStatus, 250);
+            }
+          } else {
+            stopSpecStatusPoll();
+          }
+        })
+        .catch(function () {});
+    }
 
     function shortId(s) {
       if (!s || typeof s !== "string") return "—";
@@ -196,18 +243,7 @@
 
     cy.connectLiveWs();
     applyMode();
-    fetch("/api/status")
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (st) {
-        var dur =
-          st.state === "FINISHED" && typeof st.unclaimedRunDurationUs === "number"
-            ? st.unclaimedRunDurationUs
-            : null;
-        cy.updateTimerHero(st.state || "PREP", dur);
-      })
-      .catch(function () {});
+    syncSpecStatus();
   })();
   </script>
 </body>

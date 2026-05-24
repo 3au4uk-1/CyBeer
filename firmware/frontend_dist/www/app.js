@@ -207,11 +207,19 @@
       const frag = document.createDocumentFragment();
       for (const row of data) {
         const tr = document.createElement("tr");
-        const name = row.participantName || participantName(row.participantId);
+        const isClaimed = row.claimed !== false;
         const pid = row.participantId || "";
-        const nameLink = pid
-          ? '<a href="/player.html?id=' + encodeURIComponent(pid) + '">' + name + "</a>"
-          : name;
+        let name;
+        if (!isClaimed) {
+          name = "—";
+          tr.classList.add("lb-unclaimed");
+        } else {
+          name = row.participantName || participantName(pid);
+        }
+        const nameLink =
+          isClaimed && pid
+            ? '<a href="/player.html?id=' + encodeURIComponent(pid) + '">' + name + "</a>"
+            : name;
         tr.innerHTML =
           "<td>" +
           row.rank +
@@ -339,7 +347,11 @@
         if (badge) badge.textContent = labels[msg.state] || msg.state;
         if (msg.state === "PREP") {
           updateTimerHero("PREP", 0);
-        } else if (msg.state !== "RUNNING") {
+        } else if (msg.state === "RUNNING") {
+          const elapsed =
+            typeof msg.elapsedUs === "number" ? msg.elapsedUs : 0;
+          updateTimerHero("RUNNING", elapsed);
+        } else {
           updateTimerHero(msg.state, lastUnclaimedDurationUs != null ? lastUnclaimedDurationUs : lastFinishedDurationUs);
           if ((msg.state === "FINISHED" || msg.state === "READY") && !lastUnclaimedRunId) {
             pollUnclaimedFromStatus();
