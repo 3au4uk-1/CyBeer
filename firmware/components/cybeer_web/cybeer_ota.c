@@ -106,6 +106,56 @@ static void ota_task_wdt_unsubscribe(void)
 static esp_err_t ota_stream_finalize_firmware(ota_stream_ctx_t *ctx);
 static esp_err_t ota_prepare_littlefs_write(ota_stream_ctx_t *ctx);
 
+#define OTA_MAX_REDIRECTS 5
+
+/**
+ * Open an HTTP request while manually following 3xx redirects.
+ *
+ * The streaming API (`esp_http_client_open` + `esp_http_client_read`) does NOT
+ * honour `max_redirection_count`; that option only applies to
+ * `esp_http_client_perform()`. GitHub release downloads always go through a
+ * 302 hop to `release-assets.githubusercontent.com`, so without this helper the
+ * OTA "download from GitHub" path bails out with HTTP 302.
+ */
+static esp_err_t ota_http_open_following_redirects(esp_http_client_handle_t client,
+                                                   int *out_status,
+                                                   int *out_content_len)
+{
+    for (int hop = 0; hop <= OTA_MAX_REDIRECTS; hop++) {
+        esp_err_t err = esp_http_client_open(client, 0);
+        if (err != ESP_OK) {
+            return err;
+        }
+
+        (void)esp_http_client_fetch_headers(client);
+        int status = esp_http_client_get_status_code(client);
+
+        if (status == 301 || status == 302 || status == 303 ||
+            status == 307 || status == 308) {
+            ESP_LOGI(TAG, "OTA HTTP %d, following redirect (hop %d)", status, hop + 1);
+            esp_err_t r = esp_http_client_set_redirection(client);
+            esp_http_client_close(client);
+            if (r != ESP_OK) {
+                ESP_LOGE(TAG, "redirect parse failed: %s", esp_err_to_name(r));
+                return r;
+            }
+            ota_wdt_reset();
+            continue;
+        }
+
+        if (out_status) {
+            *out_status = status;
+        }
+        if (out_content_len) {
+            *out_content_len = esp_http_client_get_content_length(client);
+        }
+        return ESP_OK;
+    }
+
+    ESP_LOGE(TAG, "too many redirects (>%d)", OTA_MAX_REDIRECTS);
+    return ESP_FAIL;
+}
+
 static void ota_set_status(const char *stage, int percent, const char *error)
 {
     s_status.active = (error == NULL) && strcmp(stage, "done") != 0 && strcmp(stage, "idle") != 0;
@@ -518,14 +568,13 @@ static esp_err_t fetch_manifest(char **out_manifest)
         return ESP_ERR_NO_MEM;
     }
 
-    esp_err_t err = esp_http_client_open(client, 0);
+    int status = 0;
+    int content_length = 0;
+    esp_err_t err = ota_http_open_following_redirects(client, &status, &content_length);
     if (err != ESP_OK) {
         esp_http_client_cleanup(client);
         return err;
     }
-
-    (void)esp_http_client_fetch_headers(client);
-    int status = esp_http_client_get_status_code(client);
     if (status != 200) {
         ESP_LOGE(TAG, "manifest HTTP %d", status);
         esp_http_client_close(client);
@@ -533,7 +582,6 @@ static esp_err_t fetch_manifest(char **out_manifest)
         return ESP_FAIL;
     }
 
-    int content_length = esp_http_client_get_content_length(client);
     if (content_length <= 0 || content_length > OTA_MANIFEST_MAX_SIZE) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
@@ -662,7 +710,9 @@ static void ota_download_task(void *arg)
         return;
     }
 
-    err = esp_http_client_open(client, 0);
+    int status = 0;
+    int content_len = 0;
+    err = ota_http_open_following_redirects(client, &status, &content_len);
     if (err != ESP_OK) {
         ota_broadcast_error("cannot connect to server");
         cybeer_led_set_fx(CYBEER_LED_FX_OTA_FAIL);
@@ -673,9 +723,7 @@ static void ota_download_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
-    (void)esp_http_client_fetch_headers(client);
 
-    int status = esp_http_client_get_status_code(client);
     if (status != 200) {
         ESP_LOGE(TAG, "bundle HTTP %d", status);
         ota_broadcast_error("bad HTTP status from server");
@@ -689,7 +737,6 @@ static void ota_download_task(void *arg)
         return;
     }
 
-    int content_len = esp_http_client_get_content_length(client);
     ESP_LOGI(TAG, "HTTP %d, Content-Length: %d", status, content_len);
 
     ota_stream_ctx_t ctx;

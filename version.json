@@ -1,7 +1,7 @@
 {
-  "version": "1.1.24",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.24/cybeer-v1.1.24.cyb",
-  "size": 1474973,
-  "sha256": "b5311a5bc8c021344e21f4576fbeff582bf951d70cd50954dc065fea44425e2e",
-  "changelog": "Cyberbot теперь источник истины. ESP32 на каждой итерации синхронизации тянет дамп и докидывает в локальное хранилище записи, которых там ещё нет (включая случай пустого LittleFS после перепрошивки). Старый одноразовый seed (push локального состояния) убран — он мешал удалениям в админке."
+  "version": "1.1.25",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.25/cybeer-v1.1.25.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "Починена кнопка \"Обновить\" в админке. OTA-загрузка с GitHub теперь корректно проходит через 302-редирект на release-assets.githubusercontent.com (раньше streaming HTTP-клиент игнорировал max_redirection_count и падал с \"bad HTTP status from server\")."
 }
