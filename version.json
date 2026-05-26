@@ -1,7 +1,7 @@
 {
-  "version": "1.1.24",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.24/cybeer-v1.1.24.cyb",
-  "size": 1474973,
-  "sha256": "b031e4caaa8f966356e46d4034c7f26b6f0d914f3ad83e4bdf55b3eb84109d13",
-  "changelog": "Cyberbot теперь источник истины. ESP32 на каждой итерации синхронизации тянет дамп и докидывает в локальное хранилище записи, которых там ещё нет (включая случай пустого LittleFS после перепрошивки). Старый одноразовый seed (push локального состояния) убран — он мешал удалениям в админке."
+  "version": "1.1.23",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.24/cybeer-v1.1.23.cyb",
+  "size": 1475885,
+  "sha256": "0f41aef0296896f067c99e3b769935a6cc0aa6e1715095e4726cbfa9913be32d",
+  "changelog": "Seed local state на cyberbot — теперь одноразовый. Удаления в админке cyberbot больше не возвращаются после перезагрузки ESP32."
 }
