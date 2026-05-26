@@ -1,7 +1,7 @@
 {
   "version": "1.1.23",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.23/cybeer-v1.1.23.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1475885,
+  "sha256": "7a458b4a560cda896a65f224d73d214ed3846fa3563cf282d3de3a378af2d2af",
   "changelog": "Seed local state на cyberbot — теперь одноразовый. Удаления в админке cyberbot больше не возвращаются после перезагрузки ESP32."
 }
