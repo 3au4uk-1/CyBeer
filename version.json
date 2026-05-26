@@ -1,7 +1,7 @@
 {
-  "version": "1.1.22",
-  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.22/cybeer-v1.1.22.cyb",
-  "size": 1475453,
-  "sha256": "48f14a76f46bd6af0e22db8ef47f8e699dc456f9898e6ec5a3cf7ae5de8ba074",
-  "changelog": "Fix sync: при клейме забега участник теперь тоже отправляется в cyberbot (был баг с FK)."
+  "version": "1.1.23",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.23/cybeer-v1.1.23.cyb",
+  "size": 0,
+  "sha256": "",
+  "changelog": "Seed local state на cyberbot — теперь одноразовый. Удаления в админке cyberbot больше не возвращаются после перезагрузки ESP32."
 }

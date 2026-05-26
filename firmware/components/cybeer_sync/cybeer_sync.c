@@ -3,11 +3,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "cJSON.h"
 #include "cybeer_config.h"
 #include "cybeer_storage.h"
 #include "cybeer_wifi.h"
+
+/** Sentinel file on LittleFS. When present, ESP32 has already pushed its full
+ * local state to cyberbot at least once, so subsequent boots must not re-push
+ * (otherwise admin-side deletions in cyberbot get undone). */
+#define CYBEER_SYNC_SEED_FLAG_PATH "/littlefs/data/seed_done.flag"
+
+static bool seed_flag_exists(void)
+{
+    struct stat st;
+    return stat(CYBEER_SYNC_SEED_FLAG_PATH, &st) == 0;
+}
+
+static void mark_seed_done(void)
+{
+    FILE *f = fopen(CYBEER_SYNC_SEED_FLAG_PATH, "wb");
+    if (f) {
+        fputs("1", f);
+        fclose(f);
+    }
+}
 #include "esp_check.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -644,9 +665,30 @@ static void sync_task(void *arg)
 {
     (void)arg;
     restore_dump_once();
-    seed_queue_from_local_storage();
+
+    bool needs_seed = !seed_flag_exists();
+    if (needs_seed) {
+        ESP_LOGI(TAG, "first boot of this firmware: seeding queue from local storage");
+        seed_queue_from_local_storage();
+    }
+
     for (;;) {
         flush_queue_once();
+        if (needs_seed && cybeer_wifi_sta_connected()) {
+            /* Only mark seed as done after at least one successful flush so we
+             * retry on later boots if the first sync failed (no WiFi etc). */
+            if (sync_take() == ESP_OK) {
+                cJSON *arr = NULL;
+                if (load_queue_locked(&arr) == ESP_OK) {
+                    if (cJSON_GetArraySize(arr) == 0) {
+                        mark_seed_done();
+                        needs_seed = false;
+                    }
+                    cJSON_Delete(arr);
+                }
+                sync_give();
+            }
+        }
         vTaskDelay(pdMS_TO_TICKS(CYBEER_SYNC_INTERVAL_MS));
     }
 }
