@@ -338,14 +338,20 @@ static void parse_run_from_dump_item(const cJSON *item, cybeer_run_t *run)
         run->claimed = true;
     }
 
+    /* cyberbot serializes durationUs as a *string* (Prisma BigInt → JSON
+     * string), so we must accept both string and number forms here. The
+     * fallback to "duration_us" only applies when "durationUs" is absent. */
     j = cJSON_GetObjectItemCaseSensitive(item, "durationUs");
-    if (!cJSON_IsNumber(j)) {
+    if (!j || cJSON_IsNull(j)) {
         j = cJSON_GetObjectItemCaseSensitive(item, "duration_us");
     }
     if (cJSON_IsString(j) && j->valuestring) {
         run->duration_us = (int64_t)strtoll(j->valuestring, NULL, 10);
     } else if (cJSON_IsNumber(j)) {
         run->duration_us = (int64_t)j->valuedouble;
+    }
+    if (run->duration_us <= 0) {
+        ESP_LOGW(TAG, "dump run %s has non-positive duration, skipping leaderboard inclusion", run->id);
     }
 
     j = cJSON_GetObjectItemCaseSensitive(item, "finished_at");
@@ -421,15 +427,42 @@ static void merge_dump_from_cyberbot(void)
             if (!cJSON_IsObject(it)) {
                 continue;
             }
-            cybeer_run_t run;
-            parse_run_from_dump_item(it, &run);
-            if (!run.id[0]) {
+            cybeer_run_t dump_run;
+            parse_run_from_dump_item(it, &dump_run);
+            if (!dump_run.id[0]) {
                 continue;
             }
-            if (!run.finished_at[0]) {
-                cybeer_storage_iso8601_now(run.finished_at);
+            if (!dump_run.finished_at[0]) {
+                cybeer_storage_iso8601_now(dump_run.finished_at);
             }
-            (void)cybeer_storage_add_run_if_not_exists(&run);
+
+            cybeer_run_t local;
+            if (cybeer_storage_get_run(dump_run.id, &local) == ESP_OK) {
+                /* Run exists locally: fill in any missing/broken fields from
+                 * the cyberbot dump (e.g. duration=0 left over from the buggy
+                 * v1.1.24 parser), but never overwrite data that local already
+                 * has — local-only changes (offline claims etc.) take
+                 * precedence until they reach cyberbot via the push queue. */
+                bool changed = false;
+                if (local.duration_us <= 0 && dump_run.duration_us > 0) {
+                    local.duration_us = dump_run.duration_us;
+                    changed = true;
+                }
+                if (!local.participant_id[0] && dump_run.participant_id[0]) {
+                    strncpy(local.participant_id, dump_run.participant_id, sizeof(local.participant_id) - 1);
+                    local.claimed = true;
+                    changed = true;
+                }
+                if (!local.finished_at[0] && dump_run.finished_at[0]) {
+                    strncpy(local.finished_at, dump_run.finished_at, sizeof(local.finished_at) - 1);
+                    changed = true;
+                }
+                if (changed) {
+                    (void)cybeer_storage_update_run(dump_run.id, &local);
+                }
+            } else {
+                (void)cybeer_storage_add_run_if_not_exists(&dump_run);
+            }
         }
     }
 
