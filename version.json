@@ -1,7 +1,7 @@
 {
   "version": "1.1.25",
   "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.25/cybeer-v1.1.25.cyb",
-  "size": 0,
-  "sha256": "",
+  "size": 1475389,
+  "sha256": "3c6e7d5c1bb1c396ef126c6bc1850a789989f9bf036f9f48fa4e2a4f92aa2ffb",
   "changelog": "Починена кнопка \"Обновить\" в админке. OTA-загрузка с GitHub теперь корректно проходит через 302-редирект на release-assets.githubusercontent.com (раньше streaming HTTP-клиент игнорировал max_redirection_count и падал с \"bad HTTP status from server\")."
 }
