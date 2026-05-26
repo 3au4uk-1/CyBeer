@@ -1,7 +1,7 @@
 {
   "version": "1.1.26",
-  "url": "https://github.com/3au4uk-1/cyBeer/releases/download/v1.1.26/cybeer-v1.1.26.cyb",
-  "size": 0,
-  "sha256": "",
+  "url": "https://github.com/3au4uk-1/CyBeer/releases/download/v1.1.26/cybeer-v1.1.26.cyb",
+  "size": 1475693,
+  "sha256": "7f68f3edb2423de2a931df7e8390336ef1412a013a1ecfadbfd535ee5b8d297a",
   "changelog": "Фикс: корректно парсим durationUs из дампа cyberbot (приходит строкой). Лидерборд после перепрошивки больше не пустой. Существующие локальные записи с нулевой длительностью (битые после v1.1.24) автоматически чинятся при следующей синхронизации."
 }
