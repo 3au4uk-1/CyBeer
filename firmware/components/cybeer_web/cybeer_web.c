@@ -285,14 +285,18 @@ static esp_err_t h_post_claim(httpd_req_t *req)
             cybeer_led_set_fx(CYBEER_LED_FX_PODIUM);
         }
         (void)cybeer_tournament_notify_run_claimed(run_id);
-        (void)cybeer_sync_enqueue_run(&claimed_run);
         cybeer_ws_broadcast_leaderboard_update();
         cybeer_led_set_unclaimed_flag(false);
 
         char pname[128] = { 0 };
         if (claimed_run.participant_id[0] != '\0') {
             (void)cybeer_storage_get_participant_name(claimed_run.participant_id, pname, sizeof(pname));
+            /* Enqueue participant BEFORE run so cyberbot resolves the FK on first sync. */
+            if (pname[0] != '\0') {
+                (void)cybeer_sync_enqueue_participant(claimed_run.participant_id, pname);
+            }
         }
+        (void)cybeer_sync_enqueue_run(&claimed_run);
 
         cJSON *resp = cJSON_CreateObject();
         if (!resp) {

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(cybeer VERSION 1.1.21)
+project(cybeer VERSION 1.1.22)
 
 add_custom_target(
     cybeer_sync_frontend
