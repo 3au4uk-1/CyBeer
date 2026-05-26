@@ -3,32 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 #include "cJSON.h"
 #include "cybeer_config.h"
 #include "cybeer_storage.h"
 #include "cybeer_wifi.h"
-
-/** Sentinel file on LittleFS. When present, ESP32 has already pushed its full
- * local state to cyberbot at least once, so subsequent boots must not re-push
- * (otherwise admin-side deletions in cyberbot get undone). */
-#define CYBEER_SYNC_SEED_FLAG_PATH "/littlefs/data/seed_done.flag"
-
-static bool seed_flag_exists(void)
-{
-    struct stat st;
-    return stat(CYBEER_SYNC_SEED_FLAG_PATH, &st) == 0;
-}
-
-static void mark_seed_done(void)
-{
-    FILE *f = fopen(CYBEER_SYNC_SEED_FLAG_PATH, "wb");
-    if (f) {
-        fputs("1", f);
-        fclose(f);
-    }
-}
 #include "esp_check.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -391,9 +370,13 @@ static void parse_run_from_dump_item(const cJSON *item, cybeer_run_t *run)
     }
 }
 
-static void restore_dump_once(void)
+/** Cyberbot is the source of truth: fetch the full dump and merge any records
+ * that are missing locally (participants are upserted by deviceId, runs are
+ * added only if their deviceRunId is not already known). Local-only records
+ * are left alone (deletions in cyberbot do NOT propagate to ESP32). */
+static void merge_dump_from_cyberbot(void)
 {
-    if (cybeer_storage_runs_count() > 0) {
+    if (!cybeer_wifi_sta_connected()) {
         return;
     }
 
@@ -602,93 +585,17 @@ static void flush_queue_once(void)
     sync_give();
 }
 
-/** Enqueue every local participant + run once. Idempotent on cyberbot (upsert).
- * Used on boot to repair any stale state in cyberbot (e.g. orphan runs whose
- * participant was never pushed in an earlier firmware version). */
-static void seed_queue_from_local_storage(void)
-{
-    const char *parts_json = cybeer_storage_participants_json();
-    if (parts_json && parts_json[0]) {
-        cJSON *parts = cJSON_Parse(parts_json);
-        if (parts && cJSON_IsArray(parts)) {
-            cJSON *it = NULL;
-            cJSON_ArrayForEach(it, parts)
-            {
-                const cJSON *jid = cJSON_GetObjectItemCaseSensitive(it, "id");
-                const cJSON *jname = cJSON_GetObjectItemCaseSensitive(it, "name");
-                if (cJSON_IsString(jid) && jid->valuestring && jid->valuestring[0]
-                    && cJSON_IsString(jname) && jname->valuestring && jname->valuestring[0]) {
-                    (void)cybeer_sync_enqueue_participant(jid->valuestring, jname->valuestring);
-                }
-            }
-        }
-        if (parts) {
-            cJSON_Delete(parts);
-        }
-    }
-
-    const char *runs_json = cybeer_storage_runs_json();
-    if (runs_json && runs_json[0]) {
-        cJSON *runs = cJSON_Parse(runs_json);
-        if (runs && cJSON_IsArray(runs)) {
-            cJSON *it = NULL;
-            cJSON_ArrayForEach(it, runs)
-            {
-                cybeer_run_t run = { 0 };
-                const cJSON *jid = cJSON_GetObjectItemCaseSensitive(it, "id");
-                const cJSON *jpid = cJSON_GetObjectItemCaseSensitive(it, "participant_id");
-                const cJSON *jdur = cJSON_GetObjectItemCaseSensitive(it, "duration_us");
-                const cJSON *jfin = cJSON_GetObjectItemCaseSensitive(it, "finished_at");
-                if (!cJSON_IsString(jid) || !jid->valuestring || !jid->valuestring[0]) {
-                    continue;
-                }
-                strncpy(run.id, jid->valuestring, sizeof(run.id) - 1);
-                if (cJSON_IsString(jpid) && jpid->valuestring) {
-                    strncpy(run.participant_id, jpid->valuestring, sizeof(run.participant_id) - 1);
-                }
-                if (cJSON_IsNumber(jdur)) {
-                    run.duration_us = (int64_t)jdur->valuedouble;
-                }
-                if (cJSON_IsString(jfin) && jfin->valuestring) {
-                    strncpy(run.finished_at, jfin->valuestring, sizeof(run.finished_at) - 1);
-                }
-                (void)cybeer_sync_enqueue_run(&run);
-            }
-        }
-        if (runs) {
-            cJSON_Delete(runs);
-        }
-    }
-}
-
 static void sync_task(void *arg)
 {
     (void)arg;
-    restore_dump_once();
-
-    bool needs_seed = !seed_flag_exists();
-    if (needs_seed) {
-        ESP_LOGI(TAG, "first boot of this firmware: seeding queue from local storage");
-        seed_queue_from_local_storage();
-    }
-
     for (;;) {
+        /* Cyberbot is the source of truth: pull dump and merge missing
+         * records into local storage on every iteration (handles boot when
+         * WiFi wasn't ready yet, and picks up admin-side additions). */
+        merge_dump_from_cyberbot();
+        /* Push any locally-queued events (new runs/participants from this
+         * device) up to cyberbot. */
         flush_queue_once();
-        if (needs_seed && cybeer_wifi_sta_connected()) {
-            /* Only mark seed as done after at least one successful flush so we
-             * retry on later boots if the first sync failed (no WiFi etc). */
-            if (sync_take() == ESP_OK) {
-                cJSON *arr = NULL;
-                if (load_queue_locked(&arr) == ESP_OK) {
-                    if (cJSON_GetArraySize(arr) == 0) {
-                        mark_seed_done();
-                        needs_seed = false;
-                    }
-                    cJSON_Delete(arr);
-                }
-                sync_give();
-            }
-        }
         vTaskDelay(pdMS_TO_TICKS(CYBEER_SYNC_INTERVAL_MS));
     }
 }
